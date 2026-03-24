@@ -22,9 +22,9 @@ def lint_server_config() -> dict:
     return lint_server_config_service()
 
 
-def analyze_recent_logs(lines: int = 200) -> dict:
+def analyze_recent_logs(lines: int = 200, include_archives: bool = False, compact: bool = False) -> dict:
     """Analyze recent Docker log lines for startup and plugin issues."""
-    return analyze_recent_logs_service(lines)
+    return analyze_recent_logs_service(lines, include_archives, compact)
 
 
 def get_server_snapshot() -> dict:

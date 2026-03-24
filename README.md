@@ -8,6 +8,13 @@ It can inspect a server from three practical angles:
 - local runtime analysis against a locally running Minecraft server
 - Docker runtime analysis against a containerized Minecraft server
 
+It can also be exposed to MCP clients over:
+
+- `stdio` for local process-based integrations
+- `streamable-http` for desktop or browser-style MCP connection flows
+
+Optionally, it can also send Discord webhook alerts for newly detected serious runtime issues while the MCP server is running.
+
 The project is designed as a small, layered MCP core with:
 
 - plugin inventory and plugin inspection
@@ -25,6 +32,7 @@ Typical use cases include:
 - analyzing a backup without running the server
 - doing lightweight runtime inspection of a local or Dockerized server
 - giving an MCP client a structured diagnostic view instead of raw logs only
+- forwarding serious newly detected runtime issues to Discord via webhook
 
 ## Not a Plugin
 
@@ -93,6 +101,12 @@ For local development, copy the example values into your shell environment or yo
 
 Core settings:
 
+- `MCP_TRANSPORT`
+  - `stdio`
+  - `streamable-http`
+- `MCP_HTTP_HOST`
+- `MCP_HTTP_PORT`
+- `MCP_HTTP_PATH`
 - `MCP_ANALYSIS_MODE`
   - `backup`
   - `runtime`
@@ -108,12 +122,20 @@ Core settings:
 - `MCP_LOCAL_RCON_PORT`
 - `MCP_LOCAL_RCON_PASSWORD`
 - `MCP_LOCAL_SERVER_JAR`
+- `MCP_DISCORD_ALERTS_ENABLED`
+- `MCP_DISCORD_WEBHOOK_URL`
+- `MCP_DISCORD_ALERT_USERNAME`
+- `MCP_DISCORD_ALERT_POLL_SECONDS`
+- `MCP_DISCORD_ALERT_SCAN_LINES`
+- `MCP_DISCORD_ALERT_MIN_PRIORITY`
+- `MCP_DISCORD_ALERT_STATE_FILE`
 
 ### Mode Examples
 
 Backup mode:
 
 ```bash
+set MCP_TRANSPORT=stdio
 set MCP_ANALYSIS_MODE=backup
 set MCP_SERVER_ROOT=C:\path\to\mcserver
 set MCP_PLUGINS_DIR=plugins
@@ -124,6 +146,7 @@ python -m minecraft_diagnostic_mcp
 Local runtime mode:
 
 ```bash
+set MCP_TRANSPORT=stdio
 set MCP_ANALYSIS_MODE=runtime
 set MCP_RUNTIME_BACKEND=local
 set MCP_SERVER_ROOT=C:\path\to\mcserver-runtime
@@ -138,12 +161,44 @@ python -m minecraft_diagnostic_mcp
 Docker runtime mode:
 
 ```bash
+set MCP_TRANSPORT=stdio
 set MCP_ANALYSIS_MODE=runtime
 set MCP_RUNTIME_BACKEND=docker
 set MCP_CONTAINER_NAME=mc
 set MCP_SERVER_ROOT=/optional/fallback/path
 python -m minecraft_diagnostic_mcp
 ```
+
+Streamable HTTP mode for desktop-style MCP connection UIs:
+
+```bash
+set MCP_TRANSPORT=streamable-http
+set MCP_HTTP_HOST=127.0.0.1
+set MCP_HTTP_PORT=8000
+set MCP_HTTP_PATH=/mcp
+set MCP_ANALYSIS_MODE=backup
+set MCP_SERVER_ROOT=C:\path\to\mcserver
+python -m minecraft_diagnostic_mcp
+```
+
+Then use:
+
+- Name: `minecraft-diagnostic-mcp`
+- Transport: `Streamable HTTP`
+- URL: `http://127.0.0.1:8000/mcp`
+
+Discord webhook alerts:
+
+```bash
+set MCP_DISCORD_ALERTS_ENABLED=true
+set MCP_DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+set MCP_DISCORD_ALERT_POLL_SECONDS=30
+set MCP_DISCORD_ALERT_SCAN_LINES=400
+set MCP_DISCORD_ALERT_MIN_PRIORITY=50
+python -m minecraft_diagnostic_mcp
+```
+
+With alerts enabled, the server runs a lightweight background poller that checks recent diagnostics and sends a Discord alert only for newly detected active high-severity issues. Resolved historical items and routine runtime noise are ignored.
 
 ## Run Flow
 
@@ -182,6 +237,7 @@ For local development:
 - edit environment variables directly or start from `.env.example`
 - run tests with `python -m unittest discover -s tests -v`
 - run the MCP server locally with `python -m minecraft_diagnostic_mcp`
+- use `MCP_TRANSPORT=streamable-http` if your MCP client expects a URL instead of a local command
 
 If you are iterating on runtime behavior, prefer:
 
@@ -193,9 +249,8 @@ If you are iterating on runtime behavior, prefer:
 
 Current scope:
 
-- no HTTP remote mode
 - no add-on/plugin ecosystem outside the current plugin-manifest coverage
-- no `.log.gz` parsing yet
+- no full incident management workflow
 - no deep bytecode analysis
 - no dependency graph engine
 - no auto-remediation or automatic report generation
@@ -230,7 +285,7 @@ The architecture is intentionally modest:
 
 ## Release Scope
 
-Recommended first public release: `0.1.0`
+Recommended first public release: `0.2.0`
 
 That release includes:
 
@@ -253,7 +308,7 @@ That release intentionally does not include:
 ## Pre-release Checklist
 
 - tests passing
-- version set to `0.1.0`
+- version set to `0.2.0`
 - `.env.example` present
 - README updated
 - no `__pycache__` tracked in the repository

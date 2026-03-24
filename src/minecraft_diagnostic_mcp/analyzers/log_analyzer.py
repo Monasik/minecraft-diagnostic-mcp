@@ -23,6 +23,8 @@ def analyze_log_records(records: list[dict]) -> list[DiagnosticItem]:
         evidence = [DiagnosticEvidence(excerpt=text[:1200], line_number=record.get("start_line"), source="docker_logs")]
         component = _suspect_component(text)
         startup_context = build_plugin_startup_context(component, record.get("start_line"), "docker_logs")
+        if record.get("log_source_file"):
+            startup_context["source_file"] = record.get("log_source_file")
         log_context = normalize_context(
             "log_entry",
             {
@@ -30,6 +32,7 @@ def analyze_log_records(records: list[dict]) -> list[DiagnosticItem]:
                 "line_number": record.get("start_line"),
                 "source": "docker_logs",
                 "startup_phase": startup_phase,
+                "source_file": record.get("log_source_file"),
             },
         )
 

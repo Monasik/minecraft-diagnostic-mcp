@@ -1,6 +1,9 @@
+import gzip
+from datetime import datetime
 from pathlib import Path
 import zipfile
 
+from minecraft_diagnostic_mcp.models.findings import LogFileInfo
 from minecraft_diagnostic_mcp.settings import settings
 
 
@@ -64,12 +67,59 @@ def read_text_file(path_like: str | Path) -> str:
     return _resolve_path(path_like).read_text(encoding="utf-8", errors="replace")
 
 
+def read_log_text(path_like: str | Path) -> str:
+    path = _resolve_path(path_like)
+    if path.suffix.lower() == ".gz":
+        with gzip.open(path, "rt", encoding="utf-8", errors="replace") as handle:
+            return handle.read()
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
 def get_latest_log_path() -> Path | None:
     logs_dir = get_logs_dir()
     latest_log = logs_dir / "latest.log"
     if latest_log.exists() and latest_log.is_file():
         return latest_log
     return None
+
+
+def list_log_files() -> list[LogFileInfo]:
+    logs_dir = get_logs_dir()
+    if not logs_dir.exists() or not logs_dir.is_dir():
+        return []
+
+    log_infos: list[LogFileInfo] = []
+    for path in logs_dir.iterdir():
+        if not path.is_file():
+            continue
+
+        lower_name = path.name.lower()
+        if lower_name.endswith(".log"):
+            file_type = "log"
+        elif lower_name.endswith(".log.gz"):
+            file_type = "log.gz"
+        elif path.suffix.lower() == ".gz":
+            file_type = "log.gz"
+        else:
+            continue
+
+        log_infos.append(
+            LogFileInfo(
+                path=str(path),
+                file_type=file_type,
+                readable=True,
+                modified_time=datetime.fromtimestamp(path.stat().st_mtime),
+            )
+        )
+
+    log_infos.sort(
+        key=lambda info: (
+            0 if Path(info.path).name == "latest.log" else 1,
+            -(info.modified_time.timestamp() if info.modified_time else 0.0),
+            Path(info.path).name,
+        )
+    )
+    return log_infos
 
 
 def get_backup_readiness() -> dict:

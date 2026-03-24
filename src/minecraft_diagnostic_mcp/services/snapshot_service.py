@@ -44,7 +44,7 @@ def get_server_snapshot() -> dict:
         log_summary=log_summary,
         diagnostics=diagnostics,
         problem_groups=problem_groups,
-        summary=_build_summary(status, problem_groups),
+        summary=_build_summary(status, problem_groups, log_summary),
     )
     return asdict(snapshot)
 
@@ -179,7 +179,7 @@ def _collect_log_summary() -> tuple[dict, list[dict]]:
         }, []
 
     log_summary = dict(log_result.get("summary", {}))
-    return {
+    summary = {
         "scanned_lines": log_result.get("scanned_lines", 200),
         "item_count": log_summary.get("item_count", log_summary.get("finding_count", 0)),
         "finding_count": log_summary.get("finding_count", 0),
@@ -188,7 +188,31 @@ def _collect_log_summary() -> tuple[dict, list[dict]]:
         "warning_count": log_summary.get("warning_count", 0),
         "critical_count": log_summary.get("critical_count", 0),
         "message": log_summary.get("message", ""),
-    }, log_result.get("diagnostics", [])
+    }
+
+    try:
+        compact_result = analyze_recent_logs(2000, include_archives=True, compact=True)
+        summary["compact_summary"] = compact_result.get("compact_summary", {})
+        summary["archives_included"] = compact_result.get("archives_included", False)
+        summary["log_files_scanned"] = compact_result.get("log_files_scanned", [])
+        summary["detail_mode"] = compact_result.get("detail_mode", "compact")
+    except Exception as exc:
+        summary["compact_summary"] = {
+            "summary_text": f"Compact historical log summary was not available: {exc}",
+            "active_item_count": 0,
+            "resolved_item_count": 0,
+            "top_active_diagnostics": [],
+            "top_resolved_diagnostics": [],
+            "repeated_patterns": [],
+            "top_categories": [],
+            "file_summary": {"scanned_count": 0, "archive_count": 0, "unreadable_count": 0, "latest_source": None, "oldest_source": None},
+            "startup_summary": {"detected": False, "item_count": 0},
+        }
+        summary["archives_included"] = False
+        summary["log_files_scanned"] = []
+        summary["detail_mode"] = "full"
+
+    return summary, log_result.get("diagnostics", [])
 
 
 def _collect_problem_groups(
@@ -268,6 +292,22 @@ def _group_key(item: dict) -> tuple[str, str]:
 
 
 def _group_title(primary_item: dict, related_items: list[dict]) -> str:
+    category = primary_item.get("category", "general")
+    context = primary_item.get("context", {}) if isinstance(primary_item.get("context", {}), dict) else {}
+    component = context.get("plugin_name") or primary_item.get("suspected_component")
+
+    if category == "missing_dependency":
+        missing_dependencies = context.get("missing_dependencies", [])
+        if isinstance(missing_dependencies, list) and len(missing_dependencies) == 1:
+            base_title = f"{component or 'Plugin'} missing {missing_dependencies[0]}"
+        elif isinstance(missing_dependencies, list) and missing_dependencies:
+            base_title = f"{component or 'Plugin'} missing dependencies"
+        else:
+            base_title = primary_item.get("title", "Diagnostic issue")
+        if related_items:
+            return f"{base_title} (+{len(related_items)} related)"
+        return base_title
+
     if related_items:
         return f"{primary_item.get('title', 'Diagnostic issue')} (+{len(related_items)} related)"
     return primary_item.get("title", "Diagnostic issue")
@@ -325,6 +365,12 @@ def _group_explanation(primary_item: dict, related_items: list[dict], theme: str
     component = context.get("plugin_name") or primary_item.get("suspected_component") or primary_item.get("source_name") or "This component"
     category = primary_item.get("category", "general")
     tags = {tag.lower() for tag in primary_item.get("tags", [])}
+    if context.get("historical_status") == "resolved":
+        last_seen_source = context.get("last_seen_source", "older logs")
+        return (
+            f"This issue was found in older logs for {component}, but it was not seen in the newest log data. "
+            f"It may already be resolved; the last observed source was {last_seen_source}."
+        )
 
     if category == "missing_dependency" or context.get("missing_dependencies") or "dependency" in tags:
         dependency_names = context.get("missing_dependencies", [])
@@ -406,6 +452,8 @@ def _group_action(primary_item: dict, recommendations: list[str], theme: str, co
     component = context.get("plugin_name") or primary_item.get("suspected_component") or primary_item.get("source_name") or "this component"
     category = primary_item.get("category", "general")
     tags = {tag.lower() for tag in primary_item.get("tags", [])}
+    if context.get("historical_status") == "resolved":
+        return f"Treat this as historical unless it reappears in the newest logs for {component}; verify only if players are still reporting symptoms."
 
     if category == "missing_dependency" or context.get("missing_dependencies") or "dependency" in tags:
         dependency_names = context.get("missing_dependencies", [])
@@ -474,23 +522,33 @@ def _dict_to_diagnostic_item(item: dict) -> DiagnosticItem:
     )
 
 
-def _build_summary(status: ServerStatus, problem_groups: list[dict]) -> str:
-    sentences = [f"Server is running in {status.execution_mode} mode."]
+def _build_summary(status: ServerStatus, problem_groups: list[dict], log_summary: dict) -> str:
     if status.execution_mode == "runtime":
-        sentences.append(f"Container '{status.container_name}' is {status.container_status}.")
+        lead = f"Runtime snapshot for '{status.container_name}': {status.container_status}."
     else:
-        sentences.append(f"Container '{status.container_name}' is represented by backup data.")
+        lead = f"Backup snapshot for '{status.container_name}'."
 
+    rcon_sentence = ""
     if not status.rcon_responsive:
-        sentences.append("RCON is not responding right now.")
+        rcon_sentence = "RCON is not responding."
 
-    top_groups = problem_groups[:2]
-    if top_groups:
-        explanations = [group.get("explanation") or group.get("summary", "") for group in top_groups]
-        condensed = " ".join(text.strip() for text in explanations if text.strip())
-        if condensed:
-            sentences.append(condensed)
+    if problem_groups:
+        issue_titles = []
+        for group in problem_groups[:2]:
+            title = str(group.get("title", "")).strip()
+            if title and title not in issue_titles:
+                issue_titles.append(title)
+        if issue_titles:
+            issues_sentence = "Main issues: " + "; ".join(issue_titles) + "."
+        else:
+            issues_sentence = "Main issues were detected in the current snapshot."
     else:
-        sentences.append("No significant diagnostic groups were detected in the current snapshot.")
+        compact_text = str(log_summary.get("compact_summary", {}).get("summary_text", "")).strip()
+        issues_sentence = compact_text or "No significant diagnostic groups were detected in the current snapshot."
 
-    return " ".join(sentences[:3])
+    parts = [lead]
+    if rcon_sentence:
+        parts.append(rcon_sentence)
+    if issues_sentence:
+        parts.append(issues_sentence)
+    return " ".join(parts[:3])

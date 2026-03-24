@@ -9,7 +9,7 @@ from .context import (
     normalize_context,
 )
 from .diagnostics import DiagnosticEvidence, DiagnosticGroup, DiagnosticItem, DiagnosticSummary
-from .findings import Evidence, Finding
+from .findings import Evidence, Finding, LogFileInfo
 from .plugin import PluginCommandInfo, PluginInfo
 from .snapshot import ContainerStats, ServerSnapshot, ServerStatus
 
@@ -28,6 +28,7 @@ __all__ = [
     "DiagnosticSummary",
     "Evidence",
     "Finding",
+    "LogFileInfo",
     "merge_contexts",
     "normalize_context",
     "PluginCommandInfo",
