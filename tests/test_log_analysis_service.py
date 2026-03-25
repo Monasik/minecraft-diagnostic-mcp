@@ -321,7 +321,78 @@ class LogAnalysisServiceTests(unittest.TestCase):
 
         repeated = result["compact_summary"]["repeated_patterns"]
         self.assertGreaterEqual(len(repeated), 1)
-        self.assertIn("Missing class PlaceholderAPI", repeated[0]["title"])
+        self.assertIn("Missing plugin dependency PlaceholderAPI", repeated[0]["title"])
+
+    def test_analyze_recent_logs_marks_likely_dependency_as_present_when_inventory_contains_it(self) -> None:
+        recent_log = "java.lang.NoClassDefFoundError: me/clip/placeholderapi/PlaceholderAPI\n"
+        full_log = "\n".join(
+            [
+                "[21:33:19] [Server thread/INFO]: Starting minecraft server version 1.21.8",
+                '[21:34:33] [Server thread/INFO]: Done (98.510s)! For help, type "help"',
+            ]
+        )
+
+        with patch("minecraft_diagnostic_mcp.services.log_analysis_service.get_recent_logs", return_value=recent_log), \
+             patch("minecraft_diagnostic_mcp.services.log_analysis_service.get_latest_log_path", return_value=Path("latest.log")), \
+             patch("minecraft_diagnostic_mcp.services.log_analysis_service.read_text_file", return_value=full_log), \
+             patch("minecraft_diagnostic_mcp.services.log_analysis_service.list_plugins", return_value={"plugins": [{"name": "FancyPlugin"}, {"name": "PlaceholderAPI"}]}):
+            result = analyze_recent_logs(50)
+
+        item = next(entry for entry in result["diagnostics"] if entry["category"] == "missing_dependency")
+        self.assertTrue(item["context"]["likely_dependency_found_in_inventory"])
+        self.assertIn("dependency_present", item["tags"])
+        self.assertTrue(any("PlaceholderAPI" in recommendation for recommendation in item["recommendations"]))
+
+    def test_compact_repeated_patterns_humanizes_startup_compatibility_warning(self) -> None:
+        recent_log = "\n".join(
+            [
+                "[21:33:30] [Server thread/WARN]: [DeluxeMenus] Could not setup a NMS hook for your server version!",
+                "[21:33:31] [Server thread/WARN]: [DeluxeMenus] Could not setup a NMS hook for your server version!",
+            ]
+        )
+        full_log = "\n".join(
+            [
+                "[21:33:19] [Server thread/INFO]: Starting minecraft server version 1.21.8",
+                '[21:34:33] [Server thread/INFO]: Done (98.510s)! For help, type "help"',
+            ]
+        )
+
+        with patch("minecraft_diagnostic_mcp.services.log_analysis_service.get_recent_logs", return_value=recent_log), \
+             patch("minecraft_diagnostic_mcp.services.log_analysis_service.get_latest_log_path", return_value=Path("latest.log")), \
+             patch("minecraft_diagnostic_mcp.services.log_analysis_service.read_text_file", return_value=full_log), \
+             patch("minecraft_diagnostic_mcp.services.log_analysis_service.list_plugins", return_value={"plugins": [{"name": "DeluxeMenus"}]}):
+            result = analyze_recent_logs(50, compact=True)
+
+        repeated = result["compact_summary"]["repeated_patterns"]
+        self.assertGreaterEqual(len(repeated), 1)
+        self.assertEqual(repeated[0]["issue_family"], "server_hook_unavailable")
+        self.assertEqual(repeated[0]["issue_label"], "Server version hook unavailable")
+        self.assertIn("DeluxeMenus", repeated[0]["title"])
+
+    def test_compact_repeated_patterns_humanize_exception_chain_to_specific_error(self) -> None:
+        recent_log = "\n".join(
+            [
+                "[22:36:05] [Server thread/ERROR]: java.lang.IllegalStateException: zip file closed",
+                "[22:36:06] [Server thread/ERROR]: java.lang.IllegalStateException: zip file closed",
+            ]
+        )
+        full_log = "\n".join(
+            [
+                "[21:33:19] [Server thread/INFO]: Starting minecraft server version 1.21.8",
+                '[21:34:33] [Server thread/INFO]: Done (98.510s)! For help, type "help"',
+            ]
+        )
+
+        with patch("minecraft_diagnostic_mcp.services.log_analysis_service.get_recent_logs", return_value=recent_log), \
+             patch("minecraft_diagnostic_mcp.services.log_analysis_service.get_latest_log_path", return_value=Path("latest.log")), \
+             patch("minecraft_diagnostic_mcp.services.log_analysis_service.read_text_file", return_value=full_log), \
+             patch("minecraft_diagnostic_mcp.services.log_analysis_service.list_plugins", return_value={"plugins": []}):
+            result = analyze_recent_logs(50, compact=True)
+
+        repeated = result["compact_summary"]["repeated_patterns"]
+        self.assertGreaterEqual(len(repeated), 1)
+        self.assertEqual(repeated[0]["issue_family"], "zip_file_closed")
+        self.assertEqual(repeated[0]["issue_label"], "Zip file closed")
 
 
 if __name__ == "__main__":

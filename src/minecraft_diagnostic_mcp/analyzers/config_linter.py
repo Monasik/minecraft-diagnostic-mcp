@@ -66,7 +66,9 @@ def _lint_server_properties(server_properties: dict, issues: list[DiagnosticItem
         )
     else:
         try:
-            int(str(port_value))
+            parsed_port = int(str(port_value))
+            if parsed_port < 1 or parsed_port > 65535:
+                raise ValueError("out_of_range")
         except ValueError:
             issues.append(
                 DiagnosticItem(
@@ -75,9 +77,9 @@ def _lint_server_properties(server_properties: dict, issues: list[DiagnosticItem
                     source_type="config",
                     source_name="server.properties",
                     title="Invalid server-port",
-                    summary="The server-port value is not numeric.",
+                    summary="The server-port value is missing, non-numeric, or outside the valid TCP port range.",
                     tags=["config", "server.properties", "server-port"],
-                    recommendations=["Change server-port to a valid integer."],
+                    recommendations=["Change server-port to a valid integer between 1 and 65535."],
                     context=build_config_context("invalid_config", "server.properties", "server-port", port_value),
                 )
             )
@@ -97,6 +99,22 @@ def _lint_server_properties(server_properties: dict, issues: list[DiagnosticItem
                 context=build_config_context("rcon_configuration", "server.properties", "enable-rcon", enable_rcon),
             )
         )
+    else:
+        rcon_password = server_properties.get("rcon.password")
+        if rcon_password is None or str(rcon_password).strip() == "":
+            issues.append(
+                DiagnosticItem(
+                    severity="warning",
+                    category="rcon_configuration",
+                    source_type="config",
+                    source_name="server.properties",
+                    title="RCON password missing",
+                    summary="RCON is enabled but rcon.password is missing or empty.",
+                    tags=["config", "server.properties", "rcon.password", "rcon"],
+                    recommendations=["Set a strong non-empty rcon.password before relying on remote MCP admin access."],
+                    context=build_config_context("rcon_configuration", "server.properties", "rcon.password", rcon_password),
+                )
+            )
 
     online_mode = server_properties.get("online-mode")
     if online_mode is not None and str(online_mode).strip().lower() == "false":

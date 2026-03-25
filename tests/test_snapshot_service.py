@@ -178,6 +178,136 @@ class SnapshotServiceTests(unittest.TestCase):
         self.assertIn("not seen in the newest log data", resolved_group["explanation"])
         self.assertIn("historical", resolved_group["primary_item"]["tags"])
 
+    def test_get_server_snapshot_reuses_compact_pattern_naming_inside_problem_groups(self) -> None:
+        def analyze_logs_stub(lines, include_archives=False, compact=False):
+            if compact:
+                return {
+                    "scanned_lines": lines,
+                    "archives_included": True,
+                    "detail_mode": "compact",
+                    "log_files_scanned": [{"path": "logs/latest.log", "file_type": "log", "readable": True}],
+                    "compact_summary": {
+                        "summary_text": "Compact log summary for snapshot.",
+                        "active_item_count": 1,
+                        "resolved_item_count": 0,
+                        "top_active_diagnostics": [{"category": "missing_dependency", "title": "FancyPlugin missing PlaceholderAPI", "suspected_component": "FancyPlugin", "historical_status": "active", "issue_family": "missing_plugin_dependency_placeholderapi", "issue_label": "Missing plugin dependency PlaceholderAPI"}],
+                        "top_resolved_diagnostics": [],
+                        "repeated_patterns": [{"category": "missing_dependency", "title": "FancyPlugin missing PlaceholderAPI", "suspected_component": "FancyPlugin", "historical_status": "active", "issue_family": "missing_plugin_dependency_placeholderapi", "issue_label": "Missing plugin dependency PlaceholderAPI", "occurrence_count": 3}],
+                        "top_categories": [{"category": "missing_dependency", "count": 1}],
+                        "file_summary": {"scanned_count": 1, "archive_count": 0, "unreadable_count": 0, "latest_source": "logs/latest.log", "oldest_source": "logs/latest.log"},
+                        "startup_summary": {"detected": True, "item_count": 1},
+                    },
+                    "summary": {"finding_count": 1, "item_count": 1, "error_count": 1, "warning_count": 0, "info_count": 0, "critical_count": 0, "message": "done"},
+                    "diagnostics": [{"severity": "error", "priority": 82, "title": "Missing plugin dependency detected", "category": "missing_dependency", "source_type": "log", "source_name": "docker_logs", "summary": "Dependency missing", "suspected_component": "FancyPlugin", "tags": ["log", "dependency", "plugin"], "context": {"plugin_name": "FancyPlugin", "missing_target_type": "plugin_dependency", "missing_dependencies": ["PlaceholderAPI"], "likely_dependency_name": "PlaceholderAPI"}}],
+                }
+            return {
+                "scanned_lines": 200,
+                "diagnostics": [
+                    {"severity": "error", "priority": 82, "title": "Missing plugin dependency detected", "category": "missing_dependency", "source_type": "log", "source_name": "docker_logs", "summary": "Dependency missing", "suspected_component": "FancyPlugin", "tags": ["log", "dependency", "plugin"], "context": {"plugin_name": "FancyPlugin", "missing_target_type": "plugin_dependency", "missing_dependencies": ["PlaceholderAPI"], "likely_dependency_name": "PlaceholderAPI"}}
+                ],
+                "summary": {"finding_count": 1, "item_count": 1, "error_count": 1, "warning_count": 0, "info_count": 0, "critical_count": 0, "message": "done"},
+            }
+
+        with patch("minecraft_diagnostic_mcp.services.snapshot_service.get_container_status", return_value="backup"), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.resolve_execution_mode", return_value="backup"), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.get_runtime_readiness", return_value={"execution_mode": "backup", "docker_available": False, "container_exists": False, "container_status": "backup", "logs_available": True}), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.get_backup_readiness", return_value={"server_root": ".", "plugins_dir": "plugins", "plugins_available": True, "logs_available": True, "latest_log_path": "logs/latest.log"}), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.get_rcon_readiness", return_value={"execution_mode": "backup", "rcon_available": False, "rcon_responsive": False, "message": "backup mode"}), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.run_rcon_command", side_effect=RuntimeError("rcon failed")), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.get_server_stats", return_value=""), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.list_plugins", return_value={"exists": True, "count": 4, "message": "ok"}), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.lint_server_config", return_value={"diagnostics": [], "summary": {"config_count": 5, "issue_count": 0, "item_count": 0, "warning_count": 0, "info_count": 0, "error_count": 0, "critical_count": 0}}), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.analyze_recent_logs", side_effect=analyze_logs_stub):
+            snapshot = get_server_snapshot()
+
+        group = snapshot["problem_groups"][0]
+        self.assertEqual(group["title"], "FancyPlugin missing PlaceholderAPI")
+        self.assertEqual(group["context"]["compact_issue_label"], "Missing plugin dependency PlaceholderAPI")
+        self.assertIn("Compact log pattern", group["summary"])
+
+    def test_get_server_snapshot_explains_dependency_present_but_unusable(self) -> None:
+        with patch("minecraft_diagnostic_mcp.services.snapshot_service.get_container_status", return_value="backup"), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.resolve_execution_mode", return_value="backup"), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.get_runtime_readiness", return_value={"execution_mode": "backup", "docker_available": False, "container_exists": False, "container_status": "backup", "logs_available": True}), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.get_backup_readiness", return_value={"server_root": ".", "plugins_dir": "plugins", "plugins_available": True, "logs_available": True, "latest_log_path": "logs/latest.log"}), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.get_rcon_readiness", return_value={"execution_mode": "backup", "rcon_available": False, "rcon_responsive": False, "message": "backup mode"}), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.run_rcon_command", side_effect=RuntimeError("rcon failed")), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.get_server_stats", return_value=""), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.list_plugins", return_value={"exists": True, "count": 4, "message": "ok"}), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.lint_server_config", return_value={"diagnostics": [], "summary": {"config_count": 5, "issue_count": 0, "item_count": 0, "warning_count": 0, "info_count": 0, "error_count": 0, "critical_count": 0}}), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.analyze_recent_logs", return_value={"scanned_lines": 200, "diagnostics": [{"severity": "error", "priority": 82, "title": "Missing plugin dependency detected", "category": "missing_dependency", "source_type": "log", "source_name": "docker_logs", "summary": "Dependency missing", "suspected_component": "FancyPlugin", "tags": ["log", "dependency", "plugin", "dependency_present"], "context": {"plugin_name": "FancyPlugin", "missing_target_type": "plugin_dependency", "likely_dependency_name": "PlaceholderAPI", "likely_dependency_found_in_inventory": True, "missing_dependencies": ["PlaceholderAPI"]}}], "summary": {"finding_count": 1, "item_count": 1, "error_count": 1, "warning_count": 0, "info_count": 0, "critical_count": 0, "message": "done"}}):
+            snapshot = get_server_snapshot()
+
+        group = snapshot["problem_groups"][0]
+        self.assertIn("already installed", group["explanation"])
+        self.assertIn("compatible versions", group["recommended_action"])
+
+    def test_get_server_snapshot_explains_high_signal_log_categories(self) -> None:
+        with patch("minecraft_diagnostic_mcp.services.snapshot_service.get_container_status", return_value="backup"), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.resolve_execution_mode", return_value="backup"), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.get_runtime_readiness", return_value={"execution_mode": "backup", "docker_available": False, "container_exists": False, "container_status": "backup", "logs_available": True}), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.get_backup_readiness", return_value={"server_root": ".", "plugins_dir": "plugins", "plugins_available": True, "logs_available": True, "latest_log_path": "logs/latest.log"}), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.get_rcon_readiness", return_value={"execution_mode": "backup", "rcon_available": False, "rcon_responsive": False, "message": "backup mode"}), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.run_rcon_command", side_effect=RuntimeError("rcon failed")), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.get_server_stats", return_value=""), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.list_plugins", return_value={"exists": True, "count": 4, "message": "ok"}), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.lint_server_config", return_value={"diagnostics": [], "summary": {"config_count": 5, "issue_count": 0, "item_count": 0, "warning_count": 0, "info_count": 0, "error_count": 0, "critical_count": 0}}), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.analyze_recent_logs", return_value={"scanned_lines": 200, "diagnostics": [{"severity": "error", "priority": 81, "title": "SQLite data corruption detected", "category": "data_integrity_error", "source_type": "log", "source_name": "docker_logs", "summary": "SQLite corruption", "suspected_component": "PyroFishingPro", "tags": ["log", "database", "sqlite", "integrity"], "context": {"plugin_name": "PyroFishingPro"}}, {"severity": "error", "priority": 80, "title": "Plugin manifest is invalid", "category": "plugin_manifest_error", "source_type": "log", "source_name": "docker_logs", "summary": "Bad manifest", "suspected_component": "PlugManX", "tags": ["log", "plugin", "manifest"], "context": {"plugin_name": "PlugManX"}}], "summary": {"finding_count": 2, "item_count": 2, "error_count": 2, "warning_count": 0, "info_count": 0, "critical_count": 0, "message": "done"}}):
+            snapshot = get_server_snapshot()
+
+        integrity_group = next(group for group in snapshot["problem_groups"] if group["primary_item"]["category"] == "data_integrity_error")
+        manifest_group = next(group for group in snapshot["problem_groups"] if group["primary_item"]["category"] == "plugin_manifest_error")
+        self.assertIn("SQLite or on-disk data corruption", integrity_group["explanation"])
+        self.assertIn("repair", integrity_group["recommended_action"])
+        self.assertIn("invalid plugin manifest", manifest_group["explanation"])
+        self.assertIn("valid plugin build", manifest_group["recommended_action"])
+
+    def test_get_server_snapshot_reuses_compact_startup_pattern_label_when_specific(self) -> None:
+        def analyze_logs_stub(lines, include_archives=False, compact=False):
+            if compact:
+                return {
+                    "scanned_lines": lines,
+                    "archives_included": True,
+                    "detail_mode": "compact",
+                    "log_files_scanned": [{"path": "logs/latest.log", "file_type": "log", "readable": True}],
+                    "compact_summary": {
+                        "summary_text": "Compact startup warning summary.",
+                        "active_item_count": 1,
+                        "resolved_item_count": 0,
+                        "top_active_diagnostics": [{"category": "plugin_compatibility_warning", "title": "DeluxeMenus: Server version hook unavailable pattern", "suspected_component": "DeluxeMenus", "historical_status": "active", "issue_family": "server_hook_unavailable", "issue_label": "Server version hook unavailable"}],
+                        "top_resolved_diagnostics": [],
+                        "repeated_patterns": [{"category": "plugin_compatibility_warning", "title": "DeluxeMenus: Server version hook unavailable pattern", "suspected_component": "DeluxeMenus", "historical_status": "active", "issue_family": "server_hook_unavailable", "issue_label": "Server version hook unavailable", "occurrence_count": 2}],
+                        "top_categories": [{"category": "plugin_compatibility_warning", "count": 1}],
+                        "file_summary": {"scanned_count": 1, "archive_count": 0, "unreadable_count": 0, "latest_source": "logs/latest.log", "oldest_source": "logs/latest.log"},
+                        "startup_summary": {"detected": True, "item_count": 1},
+                    },
+                    "summary": {"finding_count": 1, "item_count": 1, "error_count": 0, "warning_count": 1, "info_count": 0, "critical_count": 0, "message": "done"},
+                    "diagnostics": [{"severity": "warning", "priority": 52, "title": "Plugin compatibility warning", "category": "plugin_compatibility_warning", "source_type": "log", "source_name": "docker_logs", "summary": "Compatibility limit", "suspected_component": "DeluxeMenus", "tags": ["log", "startup", "plugin", "compatibility"], "context": {"plugin_name": "DeluxeMenus"}}],
+                }
+            return {
+                "scanned_lines": 200,
+                "diagnostics": [
+                    {"severity": "warning", "priority": 52, "title": "Plugin compatibility warning", "category": "plugin_compatibility_warning", "source_type": "log", "source_name": "docker_logs", "summary": "Compatibility limit", "suspected_component": "DeluxeMenus", "tags": ["log", "startup", "plugin", "compatibility"], "context": {"plugin_name": "DeluxeMenus"}}
+                ],
+                "summary": {"finding_count": 1, "item_count": 1, "error_count": 0, "warning_count": 1, "info_count": 0, "critical_count": 0, "message": "done"},
+            }
+
+        with patch("minecraft_diagnostic_mcp.services.snapshot_service.get_container_status", return_value="backup"), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.resolve_execution_mode", return_value="backup"), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.get_runtime_readiness", return_value={"execution_mode": "backup", "docker_available": False, "container_exists": False, "container_status": "backup", "logs_available": True}), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.get_backup_readiness", return_value={"server_root": ".", "plugins_dir": "plugins", "plugins_available": True, "logs_available": True, "latest_log_path": "logs/latest.log"}), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.get_rcon_readiness", return_value={"execution_mode": "backup", "rcon_available": False, "rcon_responsive": False, "message": "backup mode"}), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.run_rcon_command", side_effect=RuntimeError("rcon failed")), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.get_server_stats", return_value=""), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.list_plugins", return_value={"exists": True, "count": 4, "message": "ok"}), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.lint_server_config", return_value={"diagnostics": [], "summary": {"config_count": 5, "issue_count": 0, "item_count": 0, "warning_count": 0, "info_count": 0, "error_count": 0, "critical_count": 0}}), \
+             patch("minecraft_diagnostic_mcp.services.snapshot_service.analyze_recent_logs", side_effect=analyze_logs_stub):
+            snapshot = get_server_snapshot()
+
+        group = snapshot["problem_groups"][0]
+        self.assertEqual(group["title"], "DeluxeMenus: Server version hook unavailable pattern")
+        self.assertEqual(group["context"]["compact_issue_family"], "server_hook_unavailable")
+
 
 if __name__ == "__main__":
     unittest.main()

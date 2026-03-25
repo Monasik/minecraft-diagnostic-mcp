@@ -1,5 +1,5 @@
 import gzip
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import zipfile
 
@@ -125,10 +125,24 @@ def list_log_files() -> list[LogFileInfo]:
 def get_backup_readiness() -> dict:
     latest_log_path = get_latest_log_path()
     plugins_dir = get_plugins_dir()
+    plugins_available = plugins_dir_exists()
+    logs_available = latest_log_path is not None
+    ready = plugins_available or logs_available
+    checked_at = datetime.now(timezone.utc).isoformat()
+
+    if ready:
+        message = "Backup analysis inputs were found on disk."
+    else:
+        message = "No backup analysis inputs were found. Check MCP_SERVER_ROOT, MCP_PLUGINS_DIR, and MCP_LOGS_DIR."
+
     return {
         "server_root": str(get_server_root()),
         "plugins_dir": str(plugins_dir),
-        "plugins_available": plugins_dir_exists(),
-        "logs_available": latest_log_path is not None,
+        "plugins_available": plugins_available,
+        "logs_available": logs_available,
         "latest_log_path": str(latest_log_path) if latest_log_path else None,
+        "checked_at": checked_at,
+        "readiness_reason": "backup_inputs_found" if ready else "backup_inputs_missing",
+        "ready": ready,
+        "message": message,
     }

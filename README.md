@@ -23,6 +23,17 @@ The project is designed as a small, layered MCP core with:
 - grouped diagnostics with explanations and recommended actions
 - a unified snapshot entrypoint for AI clients
 
+Additional project docs:
+
+- `AGENTS.md` for maintainers and coding agents
+- `ALERTING.md` for Discord alerting behavior and tuning
+- `CONTRACT.md` for supported surfaces and stable response fields
+- `DEVELOPMENT.md` for local setup and workflow
+- `DEPLOYMENT.md` for VM/systemd and HTTP exposure guidance
+- `SUPPORT.md` for the intended `1.0` support boundary
+- `RELEASE_CHECKLIST.md` for pre-release verification
+- `TODO.md` for the practical backlog
+
 ## Use Cases
 
 Typical use cases include:
@@ -261,6 +272,38 @@ Runtime notes:
 - Local runtime mode expects a running Minecraft server with RCON enabled
 - Backup mode is read-only and does not provide live player/runtime information
 
+## Support Matrix
+
+Current intended support boundary:
+
+- `backup` mode
+  - status: supported
+  - expectation: read-only filesystem analysis
+- `runtime + docker`
+  - status: supported
+  - expectation: Docker CLI available, target container exists, in-container `rcon-cli` works
+- `runtime + local`
+  - status: supported on Windows for the current local-process workflow
+  - expectation: local server process is running and RCON is enabled
+- `stdio`
+  - status: supported
+- `streamable-http`
+  - status: supported
+
+Degraded-mode behavior:
+
+- if Docker CLI is missing, the runtime readiness output now says so explicitly
+- if the target Docker container is missing, readiness output says that explicitly
+- if the local backend is selected but no matching Java process is found, readiness output says that explicitly
+- if backup inputs are missing, backup readiness says that explicitly
+- runtime and backup readiness payloads also carry freshness timestamps
+
+For the formal support boundary and release promise, see:
+
+- `SUPPORT.md`
+- `CONTRACT.md`
+- `RELEASE_CHECKLIST.md`
+
 ## Project Structure
 
 High-level layout:
@@ -285,30 +328,28 @@ The architecture is intentionally modest:
 
 ## Release Scope
 
-Recommended first public release: `0.2.0`
+Current stable release: `1.0.0`
 
-That release includes:
+`1.0.0` includes:
 
-- stable MCP core structure
-- backup analysis mode
-- local runtime backend
-- Docker runtime backend
-- startup-aware log diagnostics
-- grouped diagnostic output with explanations and recommended actions
-- unit test coverage for the core parsing and service flows
+- stable MCP tool names
+- explicit support boundaries for backup/runtime/transport modes
+- predictable diagnostic payloads for MCP clients
+- realistic deployment and alerting documentation
+- confidence from both unit tests and workflow-style smoke checks
 
-That release intentionally does not include:
+Deliberately out of scope for `1.0.0`:
 
-- HTTP remote mode
-- report automation
-- deep plugin dependency mapping
-- advanced performance analytics
-- production deployment automation
+- deep bytecode analysis
+- auto-remediation
+- dashboards or report products
+- general-purpose Minecraft control-plane features
 
 ## Pre-release Checklist
 
 - tests passing
-- version set to `0.2.0`
+- support boundary documented
+- release checklist executed
 - `.env.example` present
 - README updated
 - no `__pycache__` tracked in the repository

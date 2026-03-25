@@ -19,6 +19,15 @@ COMPACT_ACTIVE_LIMIT = 8
 COMPACT_RESOLVED_LIMIT = 5
 COMPACT_PATTERN_LIMIT = 8
 GENERIC_PATTERN_CATEGORIES = {"log_warning", "log_error", "exception", "exception_chain"}
+PATTERN_LABEL_CATEGORIES = GENERIC_PATTERN_CATEGORIES | {
+    "data_integrity_error",
+    "archive_access_error",
+    "plugin_manifest_error",
+    "event_dispatch_failure",
+    "plugin_compatibility_warning",
+    "startup_security_warning",
+    "startup_warning",
+}
 
 
 def analyze_recent_logs(lines: int = 200, include_archives: bool = False, compact: bool = False) -> dict:
@@ -238,6 +247,21 @@ def _compact_issue_family(item: dict) -> tuple[str, str]:
     normalized = _normalize_excerpt_signature(excerpt)
     component = str(item.get("suspected_component") or "").casefold()
 
+    category_overrides = {
+        "data_integrity_error": ("sqlite_corruption", "SQLite corruption"),
+        "archive_access_error": ("zip_file_closed", "Zip file closed"),
+        "plugin_manifest_error": ("plugin_manifest_invalid", "Invalid plugin manifest"),
+        "event_dispatch_failure": ("packet_handling_failure", "Packet handling failure")
+        if "packetevents" in normalized or "packetevents" in component
+        else ("event_dispatch_failure", "Event dispatch failure"),
+    }
+    if category in category_overrides:
+        return category_overrides[category]
+
+    startup_family = _startup_issue_family(category, normalized)
+    if startup_family is not None:
+        return startup_family
+
     if category == "missing_dependency":
         issue_info = _missing_dependency_issue_info(item, excerpt, normalized)
         if issue_info:
@@ -270,6 +294,9 @@ def _compact_issue_family(item: dict) -> tuple[str, str]:
         return ("packet_handling_failure", "Packet handling failure")
     if "calling your listener" in normalized and ("packetevents" in normalized or "packetevents" in component):
         return ("packet_handling_failure", "Packet handling failure")
+    exception_family = _exception_issue_family(normalized)
+    if exception_family is not None:
+        return exception_family
     if "caught unhandled exception" in normalized:
         return ("unhandled_exception", "Unhandled exception")
     if "calling event" in normalized or "event exception" in normalized:
@@ -294,6 +321,18 @@ def _compact_issue_family(item: dict) -> tuple[str, str]:
 def _missing_dependency_issue_info(item: dict, excerpt: str, normalized: str) -> tuple[str, str] | None:
     context = item.get("context", {}) if isinstance(item, dict) else {}
     missing_dependencies = context.get("missing_dependencies", [])
+    target_type = str(context.get("missing_target_type", "")).casefold()
+    likely_dependency_name = _clean_symbol_name(str(context.get("likely_dependency_name", ""))) if context.get("likely_dependency_name") else None
+    missing_symbol = _clean_symbol_name(str(context.get("missing_symbol", ""))) if context.get("missing_symbol") else None
+
+    if target_type == "plugin_dependency" and likely_dependency_name:
+        dependency_slug = _slugify_issue_part(likely_dependency_name) or "dependency"
+        return (f"missing_plugin_dependency_{dependency_slug}", f"Missing plugin dependency {likely_dependency_name}")
+
+    if target_type == "library_or_classpath" and missing_symbol:
+        symbol_slug = _slugify_issue_part(missing_symbol) or "class"
+        return (f"missing_library_symbol_{symbol_slug}", f"Missing class {missing_symbol}")
+
     if isinstance(missing_dependencies, list) and len(missing_dependencies) == 1:
         dependency_name = _clean_symbol_name(str(missing_dependencies[0]))
         dependency_slug = _slugify_issue_part(dependency_name) or "dependency"
@@ -356,7 +395,7 @@ def _compact_pattern_title(item: dict, issue_label: str) -> str:
     if category == "missing_dependency" and issue_label:
         return f"{component_prefix}{issue_label}".strip()
 
-    if category not in GENERIC_PATTERN_CATEGORIES:
+    if category not in PATTERN_LABEL_CATEGORIES:
         return str(item.get("title", "Repeated issue"))
 
     if issue_label:
@@ -461,6 +500,53 @@ def _fallback_issue_label(normalized_excerpt: str, category: str) -> str:
     if not label_words:
         return _humanize_category_label(category)
     return " ".join(label_words)
+
+
+def _startup_issue_family(category: str, normalized_excerpt: str) -> tuple[str, str] | None:
+    if category == "startup_security_warning":
+        if "offline/insecure mode" in normalized_excerpt or "online-mode" in normalized_excerpt:
+            return ("offline_mode_enabled", "Offline mode enabled")
+        return ("startup_security_warning", "Startup security warning")
+
+    if category == "plugin_compatibility_warning":
+        if "nms hook" in normalized_excerpt:
+            return ("server_hook_unavailable", "Server version hook unavailable")
+        if "not been tested with the current minecraft version" in normalized_excerpt:
+            return ("untested_minecraft_version", "Untested Minecraft version")
+        if "paper-plugins" in normalized_excerpt:
+            return ("paper_plugin_compatibility_limit", "Paper plugin compatibility limitation")
+        return ("plugin_compatibility_warning", "Plugin compatibility warning")
+
+    if category == "startup_warning":
+        if "deprecated" in normalized_excerpt:
+            return ("deprecated_startup_config", "Deprecated startup config")
+        if "lang file" in normalized_excerpt or "locale" in normalized_excerpt:
+            return ("missing_locale_resource", "Missing locale resource")
+        if "mineskinclient without api key" in normalized_excerpt or "without api key" in normalized_excerpt:
+            return ("missing_api_key", "Missing API key")
+        if "legacy material support" in normalized_excerpt:
+            return ("legacy_material_support", "Legacy material support")
+        return ("startup_warning", "Startup warning")
+
+    return None
+
+
+def _exception_issue_family(normalized_excerpt: str) -> tuple[str, str] | None:
+    exception_patterns = (
+        ("illegalargumentexception", ("illegal_argument", "Illegal argument error")),
+        ("illegalstateexception", ("illegal_state", "Illegal state error")),
+        ("numberformatexception", ("number_format", "Number format error")),
+        ("classcastexception", ("class_cast", "Class cast error")),
+        ("unsupportedclassversionerror", ("unsupported_java_version", "Unsupported Java version")),
+        ("verifyerror", ("bytecode_verification", "Bytecode verification error")),
+        ("sqlexception", ("sql_failure", "SQL failure")),
+        ("ioexception", ("io_failure", "I/O failure")),
+        ("nullpointerexception", ("null_pointer", "Null pointer exception")),
+    )
+    for needle, result in exception_patterns:
+        if needle in normalized_excerpt:
+            return result
+    return None
 
 
 def _pattern_score(pattern: dict) -> int:
@@ -722,13 +808,15 @@ def _load_archive_records() -> dict:
 def _correlate_findings_with_plugins(findings):
     try:
         plugin_result = list_plugins()
-        plugin_names = {
-            plugin.get("name", "").casefold()
+        plugin_name_map = {
+            plugin.get("name", "").casefold(): plugin.get("name", "")
             for plugin in plugin_result.get("plugins", [])
             if plugin.get("name")
         }
     except Exception:
-        plugin_names = set()
+        plugin_name_map = {}
+
+    plugin_names = set(plugin_name_map.keys())
 
     for finding in findings:
         component = (finding.suspected_component or "").casefold()
@@ -740,6 +828,23 @@ def _correlate_findings_with_plugins(findings):
             finding.context["plugin_found_in_inventory"] = True
             if "Plugin is present in current inventory." not in finding.recommendations:
                 finding.recommendations.append("Plugin is present in current inventory.")
+
+        if finding.category == "missing_dependency":
+            likely_dependency_name = str(finding.context.get("likely_dependency_name", "")).strip()
+            likely_dependency_key = likely_dependency_name.casefold()
+            likely_dependency_found = bool(likely_dependency_key and likely_dependency_key in plugin_names)
+            finding.context["likely_dependency_found_in_inventory"] = likely_dependency_found
+            if likely_dependency_found:
+                if "dependency_present" not in finding.tags:
+                    finding.tags.append("dependency_present")
+                inventory_name = plugin_name_map.get(likely_dependency_key, likely_dependency_name)
+                if (
+                    f"Dependency plugin {inventory_name} is already present in inventory, so this may be a version or compatibility issue."
+                    not in finding.recommendations
+                ):
+                    finding.recommendations.append(
+                        f"Dependency plugin {inventory_name} is already present in inventory, so this may be a version or compatibility issue."
+                    )
 
     return findings
 

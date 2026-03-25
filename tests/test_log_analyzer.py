@@ -123,6 +123,74 @@ class LogAnalyzerTests(unittest.TestCase):
         self.assertGreater(security.priority, 50)
         self.assertGreater(compatibility.priority, 40)
 
+    def test_analyze_log_records_distinguishes_missing_plugin_dependency_from_classpath_failure(self) -> None:
+        records = [
+            {
+                "start_line": 1,
+                "text": "java.lang.NoClassDefFoundError: me/clip/placeholderapi/PlaceholderAPI",
+                "level": "ERROR",
+                "lines": [],
+                "has_stacktrace": True,
+                "startup_phase": True,
+            },
+            {
+                "start_line": 2,
+                "text": "java.lang.NoClassDefFoundError: com/example/internal/ShadedThing",
+                "level": "ERROR",
+                "lines": [],
+                "has_stacktrace": True,
+                "startup_phase": True,
+            },
+        ]
+
+        findings = [finding for finding in analyze_log_records(records) if finding.category == "missing_dependency"]
+        self.assertEqual(len(findings), 2)
+
+        plugin_dep = next(finding for finding in findings if finding.context.get("missing_target_type") == "plugin_dependency")
+        classpath_dep = next(finding for finding in findings if finding.context.get("missing_target_type") == "library_or_classpath")
+
+        self.assertEqual(plugin_dep.title, "Missing plugin dependency detected")
+        self.assertEqual(plugin_dep.context["likely_dependency_name"], "PlaceholderAPI")
+        self.assertEqual(plugin_dep.context["missing_dependencies"], ["PlaceholderAPI"])
+
+        self.assertEqual(classpath_dep.title, "Missing library or classpath dependency detected")
+        self.assertEqual(classpath_dep.context["missing_symbol"], "ShadedThing")
+        self.assertEqual(classpath_dep.context["likely_dependency_name"], "ShadedThing")
+
+    def test_analyze_log_records_promotes_known_high_signal_errors_out_of_generic_buckets(self) -> None:
+        records = [
+            {
+                "start_line": 1,
+                "text": "[PyroFishingPro] org.sqlite.SQLiteException: [SQLITE_CORRUPT] The database disk image is malformed",
+                "level": "ERROR",
+                "lines": [],
+                "has_stacktrace": True,
+            },
+            {
+                "start_line": 2,
+                "text": "[PlugManX] Error reading plugin description: No name field found in plugin.yml",
+                "level": "ERROR",
+                "lines": [],
+                "has_stacktrace": False,
+                "startup_phase": True,
+            },
+            {
+                "start_line": 3,
+                "text": "[PacketEventsAPI] PacketEvents caught unhandled exception calling event",
+                "level": "WARN",
+                "lines": [],
+                "has_stacktrace": True,
+            },
+        ]
+
+        findings = analyze_log_records(records)
+        categories = {finding.category for finding in findings}
+
+        self.assertIn("data_integrity_error", categories)
+        self.assertIn("plugin_manifest_error", categories)
+        self.assertIn("event_dispatch_failure", categories)
+        self.assertNotIn("log_error", {finding.category for finding in findings if finding.title == "Plugin manifest is invalid"})
+
 
 if __name__ == "__main__":
     unittest.main()

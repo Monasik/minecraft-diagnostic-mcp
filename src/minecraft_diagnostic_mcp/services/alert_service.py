@@ -31,6 +31,19 @@ def alerts_enabled() -> bool:
     return settings.discord_alerts_enabled and bool(settings.discord_webhook_url)
 
 
+def preview_alert_candidates(lines: int | None = None) -> dict[str, Any]:
+    scan_lines = int(lines) if lines is not None else settings.discord_alert_scan_lines
+    analysis = analyze_recent_logs(scan_lines, include_archives=False, compact=False)
+    diagnostics = analysis.get("diagnostics", [])
+    candidates = [item for item in diagnostics if _is_alert_candidate(item)]
+    return {
+        "scanned_count": len(diagnostics),
+        "candidate_count": len(candidates),
+        "candidate_titles": [item.get("title", "") for item in candidates[:10]],
+        "candidates": candidates[: min(len(candidates), max(1, settings.discord_alert_max_batch_items))],
+    }
+
+
 def start_background_alert_loop() -> threading.Thread | None:
     if not alerts_enabled():
         return None
@@ -63,24 +76,31 @@ def poll_alerts_once() -> dict[str, Any]:
     sent_items = []
     now = int(time.time())
     updated = False
+    batch_items = []
+    max_batch_items = max(1, settings.discord_alert_max_batch_items)
 
     for item in diagnostics:
         if not _is_alert_candidate(item):
             continue
 
         fingerprint = _alert_fingerprint(item)
-        if fingerprint in state.get("sent_alerts", {}):
+        if not _should_send_alert(fingerprint, state, now):
             continue
 
-        payload = _build_discord_payload(item)
-        _send_discord_webhook(payload)
         state.setdefault("sent_alerts", {})[fingerprint] = {
             "sent_at": now,
             "title": item.get("title", ""),
             "category": item.get("category", ""),
         }
         sent_items.append(item)
+        batch_items.append(item)
         updated = True
+        if len(batch_items) >= max_batch_items:
+            _send_discord_webhook(_build_discord_payload(batch_items))
+            batch_items = []
+
+    if batch_items:
+        _send_discord_webhook(_build_discord_payload(batch_items))
 
     if updated:
         _save_alert_state(state)
@@ -90,6 +110,17 @@ def poll_alerts_once() -> dict[str, Any]:
         "sent_count": len(sent_items),
         "sent_titles": [item.get("title", "") for item in sent_items],
     }
+
+
+def _should_send_alert(fingerprint: str, state: dict[str, Any], now: int) -> bool:
+    sent = state.get("sent_alerts", {}).get(fingerprint)
+    if not sent:
+        return True
+    cooldown = max(0, int(settings.discord_alert_cooldown_seconds))
+    if cooldown == 0:
+        return False
+    sent_at = int(sent.get("sent_at", 0))
+    return (now - sent_at) >= cooldown
 
 
 def _is_alert_candidate(item: dict[str, Any]) -> bool:
@@ -128,7 +159,15 @@ def _alert_fingerprint(item: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(signature, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
-def _build_discord_payload(item: dict[str, Any]) -> dict[str, Any]:
+def _build_discord_payload(item_or_items: dict[str, Any] | list[dict[str, Any]]) -> dict[str, Any]:
+    items = item_or_items if isinstance(item_or_items, list) else [item_or_items]
+    return {
+        "username": settings.discord_alert_username,
+        "embeds": [_build_discord_embed(item) for item in items[: max(1, settings.discord_alert_max_batch_items)]],
+    }
+
+
+def _build_discord_embed(item: dict[str, Any]) -> dict[str, Any]:
     severity = str(item.get("severity", "info")).upper()
     title = str(item.get("title", "Minecraft diagnostic alert")).strip()
     summary = str(item.get("summary", "")).strip()
@@ -172,15 +211,10 @@ def _build_discord_payload(item: dict[str, Any]) -> dict[str, Any]:
         fields.append({"name": "Log source", "value": str(context.get("source_file"))[:1024], "inline": False})
 
     return {
-        "username": settings.discord_alert_username,
-        "embeds": [
-            {
-                "title": title[:256],
-                "description": "\n".join(description_lines)[:4000],
-                "color": _discord_color_for_severity(severity.lower()),
-                "fields": fields[:5],
-            }
-        ],
+        "title": title[:256],
+        "description": "\n".join(description_lines)[:4000],
+        "color": _discord_color_for_severity(severity.lower()),
+        "fields": fields[:5],
     }
 
 

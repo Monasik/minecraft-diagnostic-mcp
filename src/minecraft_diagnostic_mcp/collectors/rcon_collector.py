@@ -1,6 +1,7 @@
 import socket
 import struct
 import subprocess
+from datetime import datetime, timezone
 
 from minecraft_diagnostic_mcp.collectors.docker_collector import (
     container_exists,
@@ -31,16 +32,22 @@ def run_rcon_command(command: str) -> str:
 
 def get_rcon_readiness() -> dict:
     mode = resolve_execution_mode()
+    checked_at = datetime.now(timezone.utc).isoformat()
     if mode == "backup":
         return {
             "execution_mode": mode,
             "runtime_backend": get_runtime_backend(),
             "rcon_available": False,
             "rcon_responsive": False,
+            "auth_configured": False,
+            "ready": False,
+            "checked_at": checked_at,
+            "readiness_reason": "backup_mode",
             "message": "RCON is unavailable in backup analysis mode.",
         }
 
     if get_runtime_backend() == "local":
+        auth_configured = bool(settings.local_rcon_password)
         try:
             run_rcon_command("list")
             return {
@@ -48,14 +55,22 @@ def get_rcon_readiness() -> dict:
                 "runtime_backend": "local",
                 "rcon_available": True,
                 "rcon_responsive": True,
+                "auth_configured": auth_configured,
+                "ready": True,
+                "checked_at": checked_at,
+                "readiness_reason": "rcon_ready",
                 "message": "Local RCON responded successfully.",
             }
         except Exception as exc:
             return {
                 "execution_mode": mode,
                 "runtime_backend": "local",
-                "rcon_available": True,
+                "rcon_available": auth_configured,
                 "rcon_responsive": False,
+                "auth_configured": auth_configured,
+                "ready": False,
+                "checked_at": checked_at,
+                "readiness_reason": "local_rcon_auth_missing" if not auth_configured else "local_rcon_unresponsive",
                 "message": f"Local RCON did not respond cleanly: {exc}",
             }
 
@@ -65,6 +80,10 @@ def get_rcon_readiness() -> dict:
             "runtime_backend": "docker",
             "rcon_available": False,
             "rcon_responsive": False,
+            "auth_configured": None,
+            "ready": False,
+            "checked_at": checked_at,
+            "readiness_reason": "docker_cli_missing",
             "message": "Docker CLI is not available.",
         }
 
@@ -74,6 +93,10 @@ def get_rcon_readiness() -> dict:
             "runtime_backend": "docker",
             "rcon_available": False,
             "rcon_responsive": False,
+            "auth_configured": None,
+            "ready": False,
+            "checked_at": checked_at,
+            "readiness_reason": "container_missing",
             "message": f"Docker container '{settings.container_name}' was not found.",
         }
 
@@ -84,6 +107,10 @@ def get_rcon_readiness() -> dict:
             "runtime_backend": "docker",
             "rcon_available": True,
             "rcon_responsive": True,
+            "auth_configured": None,
+            "ready": True,
+            "checked_at": checked_at,
+            "readiness_reason": "rcon_ready",
             "message": "RCON responded successfully.",
         }
     except Exception as exc:
@@ -92,6 +119,10 @@ def get_rcon_readiness() -> dict:
             "runtime_backend": "docker",
             "rcon_available": True,
             "rcon_responsive": False,
+            "auth_configured": None,
+            "ready": False,
+            "checked_at": checked_at,
+            "readiness_reason": "rcon_unresponsive",
             "message": f"RCON did not respond cleanly: {exc}",
         }
 

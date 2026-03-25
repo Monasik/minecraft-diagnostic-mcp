@@ -2,7 +2,15 @@ from typing import Any
 
 
 CONTEXT_SCHEMAS: dict[str, tuple[str, ...]] = {
-    "missing_dependency": ("plugin_name", "missing_dependencies", "plugin_path"),
+    "missing_dependency": (
+        "plugin_name",
+        "missing_dependencies",
+        "plugin_path",
+        "missing_target_type",
+        "missing_symbol",
+        "likely_dependency_name",
+        "likely_dependency_found_in_inventory",
+    ),
     "plugin_startup": ("plugin_name", "line_number", "source", "plugin_found_in_inventory"),
     "rcon_configuration": ("config_file", "key", "current_value"),
     "security_configuration": ("config_file", "key", "current_value"),
@@ -14,6 +22,10 @@ def build_missing_dependency_context(
     plugin_name: str | None,
     missing_dependencies: list[str] | None,
     plugin_path: str | None = None,
+    missing_target_type: str | None = None,
+    missing_symbol: str | None = None,
+    likely_dependency_name: str | None = None,
+    likely_dependency_found_in_inventory: bool | None = None,
 ) -> dict[str, Any]:
     return normalize_context(
         "missing_dependency",
@@ -21,6 +33,10 @@ def build_missing_dependency_context(
             "plugin_name": plugin_name,
             "missing_dependencies": missing_dependencies or [],
             "plugin_path": plugin_path,
+            "missing_target_type": missing_target_type,
+            "missing_symbol": missing_symbol,
+            "likely_dependency_name": likely_dependency_name,
+            "likely_dependency_found_in_inventory": likely_dependency_found_in_inventory,
         },
     )
 
@@ -76,6 +92,10 @@ def normalize_context(category: str, context: dict[str, Any] | None) -> dict[str
         normalized["plugin_name"] = _normalize_optional_string(normalized.get("plugin_name"))
         normalized["missing_dependencies"] = _normalize_string_list(normalized.get("missing_dependencies"))
         normalized["plugin_path"] = _normalize_optional_string(normalized.get("plugin_path"))
+        normalized["missing_target_type"] = _normalize_optional_string(normalized.get("missing_target_type"))
+        normalized["missing_symbol"] = _normalize_optional_string(normalized.get("missing_symbol"))
+        normalized["likely_dependency_name"] = _normalize_optional_string(normalized.get("likely_dependency_name"))
+        normalized["likely_dependency_found_in_inventory"] = _normalize_optional_bool(normalized.get("likely_dependency_found_in_inventory"))
     elif category == "plugin_startup":
         normalized["plugin_name"] = _normalize_optional_string(normalized.get("plugin_name"))
         normalized["line_number"] = _normalize_optional_int(normalized.get("line_number"))

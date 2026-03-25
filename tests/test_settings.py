@@ -50,3 +50,21 @@ class SettingsTests(unittest.TestCase):
             import minecraft_diagnostic_mcp.settings as settings_module
 
             importlib.reload(settings_module)
+
+    def test_settings_reads_discord_alert_tuning_env(self) -> None:
+        original = dict(os.environ)
+        try:
+            os.environ["MCP_DISCORD_ALERT_COOLDOWN_SECONDS"] = "120"
+            os.environ["MCP_DISCORD_ALERT_MAX_BATCH_ITEMS"] = "5"
+
+            import minecraft_diagnostic_mcp.settings as settings_module
+
+            settings_module = importlib.reload(settings_module)
+            self.assertEqual(settings_module.settings.discord_alert_cooldown_seconds, 120)
+            self.assertEqual(settings_module.settings.discord_alert_max_batch_items, 5)
+        finally:
+            os.environ.clear()
+            os.environ.update(original)
+            import minecraft_diagnostic_mcp.settings as settings_module
+
+            importlib.reload(settings_module)

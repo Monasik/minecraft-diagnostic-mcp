@@ -29,6 +29,8 @@ class Settings:
     discord_alert_scan_lines: int
     discord_alert_min_priority: int
     discord_alert_state_file: str
+    discord_alert_cooldown_seconds: int
+    discord_alert_max_batch_items: int
     config_targets: tuple[tuple[str, tuple[str, ...]], ...]
 
     def iter_config_targets(self) -> tuple[tuple[str, tuple[str, ...]], ...]:
@@ -80,6 +82,8 @@ settings = Settings(
     discord_alert_scan_lines=_read_int_env("MCP_DISCORD_ALERT_SCAN_LINES", 400),
     discord_alert_min_priority=_read_int_env("MCP_DISCORD_ALERT_MIN_PRIORITY", 50),
     discord_alert_state_file=os.getenv("MCP_DISCORD_ALERT_STATE_FILE", "").strip(),
+    discord_alert_cooldown_seconds=_read_int_env("MCP_DISCORD_ALERT_COOLDOWN_SECONDS", 1800),
+    discord_alert_max_batch_items=_read_int_env("MCP_DISCORD_ALERT_MAX_BATCH_ITEMS", 3),
     config_targets=(
         ("server.properties", ("server.properties",)),
         ("bukkit.yml", ("bukkit.yml",)),

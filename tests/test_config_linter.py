@@ -16,8 +16,9 @@ class ConfigLinterTests(unittest.TestCase):
         ]
         parsed_configs = {
             "server.properties": {
-                "server-port": "abc",
-                "enable-rcon": "false",
+                "server-port": "70000",
+                "enable-rcon": "true",
+                "rcon.password": "",
                 "online-mode": "false",
                 "motd": "",
             }
@@ -28,7 +29,7 @@ class ConfigLinterTests(unittest.TestCase):
         severities = {issue.severity for issue in issues}
 
         self.assertIn("Invalid server-port", titles)
-        self.assertIn("RCON not enabled", titles)
+        self.assertIn("RCON password missing", titles)
         self.assertIn("Online mode disabled", titles)
         self.assertIn("Empty MOTD", titles)
         self.assertIn("Config file missing", titles)
@@ -36,7 +37,7 @@ class ConfigLinterTests(unittest.TestCase):
         invalid_port = next(issue for issue in issues if issue.title == "Invalid server-port")
         self.assertEqual(invalid_port.context["config_file"], "server.properties")
         self.assertEqual(invalid_port.context["key"], "server-port")
-        self.assertEqual(invalid_port.context["current_value"], "abc")
+        self.assertEqual(invalid_port.context["current_value"], "70000")
 
     def test_lint_configs_skips_paper_yml_when_modern_paper_configs_exist(self) -> None:
         config_files = [

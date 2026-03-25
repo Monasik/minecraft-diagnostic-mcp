@@ -33,7 +33,7 @@ def get_server_snapshot() -> dict:
     plugin_summary = _collect_plugin_summary()
     config_summary, config_diagnostics = _collect_config_summary()
     log_summary, log_diagnostics = _collect_log_summary()
-    problem_groups = _collect_problem_groups(plugin_summary, config_diagnostics, log_diagnostics)
+    problem_groups = _collect_problem_groups(plugin_summary, config_diagnostics, log_diagnostics, log_summary)
     diagnostics = [group["primary_item"] for group in problem_groups]
 
     snapshot = ServerSnapshot(
@@ -219,12 +219,14 @@ def _collect_problem_groups(
     plugin_summary: dict,
     config_diagnostics: list[dict],
     log_diagnostics: list[dict],
+    log_summary: dict,
 ) -> list[dict]:
     diagnostics = []
     diagnostics.extend(plugin_summary.get("diagnostics", []))
     diagnostics.extend(log_diagnostics)
     diagnostics.extend(config_diagnostics)
     diagnostics.sort(key=diagnostic_sort_key)
+    pattern_hints = _build_pattern_hints(log_summary)
 
     groups: dict[tuple[str, str], list[dict]] = {}
     for item in diagnostics:
@@ -235,23 +237,24 @@ def _collect_problem_groups(
     for key, items in groups.items():
         primary_item = sorted(items, key=diagnostic_sort_key)[0]
         related_items = [item for item in items if item is not primary_item]
+        compact_pattern = _match_compact_pattern(primary_item, related_items, key[1], pattern_hints)
         recommendations = []
         for item in items:
             for recommendation in item.get("recommendations", []):
                 if recommendation not in recommendations:
                     recommendations.append(recommendation)
-        group_context = _build_group_context(primary_item, related_items)
+        group_context = _build_group_context(primary_item, related_items, compact_pattern)
 
         problem_groups.append(
             asdict(
                 DiagnosticGroup(
                     id=f"{key[0]}::{key[1]}",
-                    title=_group_title(primary_item, related_items),
+                    title=_group_title(primary_item, related_items, compact_pattern, group_context),
                     severity=primary_item.get("severity", "info"),
                     suspected_component=primary_item.get("suspected_component"),
                     primary_item=_dict_to_diagnostic_item(primary_item),
                     related_items=[_dict_to_diagnostic_item(item) for item in related_items],
-                    summary=_group_summary(primary_item, related_items),
+                    summary=_group_summary(primary_item, related_items, compact_pattern),
                     explanation=_group_explanation(primary_item, related_items, key[1], group_context),
                     recommended_action=_group_action(primary_item, recommendations, key[1], group_context),
                     recommendations=recommendations[:4],
@@ -291,10 +294,16 @@ def _group_key(item: dict) -> tuple[str, str]:
     return (str(component).casefold(), theme)
 
 
-def _group_title(primary_item: dict, related_items: list[dict]) -> str:
+def _group_title(primary_item: dict, related_items: list[dict], compact_pattern: dict | None, context: dict) -> str:
     category = primary_item.get("category", "general")
-    context = primary_item.get("context", {}) if isinstance(primary_item.get("context", {}), dict) else {}
     component = context.get("plugin_name") or primary_item.get("suspected_component")
+
+    if compact_pattern and not _is_generic_group_title(compact_pattern):
+        pattern_title = str(compact_pattern.get("title", "")).strip()
+        if pattern_title:
+            if related_items:
+                return f"{pattern_title} (+{len(related_items)} related)"
+            return pattern_title
 
     if category == "missing_dependency":
         missing_dependencies = context.get("missing_dependencies", [])
@@ -313,16 +322,22 @@ def _group_title(primary_item: dict, related_items: list[dict]) -> str:
     return primary_item.get("title", "Diagnostic issue")
 
 
-def _group_summary(primary_item: dict, related_items: list[dict]) -> str:
+def _group_summary(primary_item: dict, related_items: list[dict], compact_pattern: dict | None) -> str:
+    base_summary = primary_item.get("summary", "")
+    if compact_pattern and compact_pattern.get("issue_label"):
+        pattern_label = str(compact_pattern.get("issue_label", "")).strip()
+        if pattern_label and pattern_label.casefold() not in base_summary.casefold():
+            base_summary = f"{base_summary} Compact log pattern: {pattern_label}."
+
     if not related_items:
-        return primary_item.get("summary", "")
+        return base_summary.strip()
     return (
-        f"{primary_item.get('summary', '')} "
+        f"{base_summary} "
         f"Detected {len(related_items)} additional related diagnostic item(s)."
     ).strip()
 
 
-def _build_group_context(primary_item: dict, related_items: list[dict]) -> dict:
+def _build_group_context(primary_item: dict, related_items: list[dict], compact_pattern: dict | None) -> dict:
     merged_items = [primary_item, *related_items]
     primary_category = primary_item.get("category", "general")
     contexts = [item.get("context", {}) for item in merged_items]
@@ -335,6 +350,9 @@ def _build_group_context(primary_item: dict, related_items: list[dict]) -> dict:
                 primary_item.get("suspected_component") or primary_item.get("source_name"),
                 context.get("missing_dependencies", []),
                 context.get("plugin_path"),
+                missing_target_type=context.get("missing_target_type"),
+                missing_symbol=context.get("missing_symbol"),
+                likely_dependency_name=context.get("likely_dependency_name"),
             ),
             context,
         )
@@ -358,7 +376,14 @@ def _build_group_context(primary_item: dict, related_items: list[dict]) -> dict:
     if related_sources:
         context["related_sources"] = related_sources
 
-    return normalize_context(primary_category, context)
+    normalized = normalize_context(primary_category, context)
+    if compact_pattern:
+        normalized["compact_pattern_title"] = compact_pattern.get("title")
+        normalized["compact_issue_family"] = compact_pattern.get("issue_family")
+        normalized["compact_issue_label"] = compact_pattern.get("issue_label")
+        normalized["compact_pattern_status"] = compact_pattern.get("historical_status")
+
+    return normalized
 
 
 def _group_explanation(primary_item: dict, related_items: list[dict], theme: str, context: dict) -> str:
@@ -374,7 +399,24 @@ def _group_explanation(primary_item: dict, related_items: list[dict], theme: str
 
     if category == "missing_dependency" or context.get("missing_dependencies") or "dependency" in tags:
         dependency_names = context.get("missing_dependencies", [])
+        missing_target_type = str(context.get("missing_target_type", "")).casefold()
+        likely_dependency_name = context.get("likely_dependency_name")
+        likely_dependency_found = bool(context.get("likely_dependency_found_in_inventory"))
+        missing_symbol = context.get("missing_symbol")
         dependency_suffix = f" ({', '.join(dependency_names)})" if dependency_names else ""
+        if missing_target_type == "plugin_dependency" and likely_dependency_found and likely_dependency_name:
+            return (
+                f"Plugin {component} is failing while trying to use dependency plugin {likely_dependency_name}, but that dependency is already installed. "
+                "This usually points to an incompatible dependency version, wrong platform build, or classloader mismatch rather than a truly missing plugin."
+            )
+        if missing_target_type == "library_or_classpath":
+            subject = likely_dependency_name or missing_symbol or "a required class"
+            return (
+                f"Plugin {component} is failing because a required library or classpath symbol is missing ({subject}). "
+                "That usually points to an incompatible build, incomplete jar, or missing shaded dependency rather than a missing plugin dependency."
+            )
+        if missing_target_type == "plugin_dependency" and likely_dependency_name and not dependency_names:
+            dependency_suffix = f" ({likely_dependency_name})"
         return (
             f"Plugin {component} depends on another plugin that is not currently installed{dependency_suffix}. "
             f"That missing dependency can prevent the plugin from loading correctly."
@@ -390,6 +432,30 @@ def _group_explanation(primary_item: dict, related_items: list[dict], theme: str
         return (
             f"Plugin {component} reported a startup-time compatibility limitation with the current server version or platform. "
             "That may not break startup immediately, but it can disable features or cause later instability."
+        )
+
+    if category == "plugin_manifest_error":
+        return (
+            f"Plugin {component} appears to have an invalid plugin manifest, so the server cannot load it as a valid plugin jar. "
+            "This is usually a broken jar build rather than a runtime config issue."
+        )
+
+    if category == "data_integrity_error":
+        return (
+            f"Logs for {component} indicate SQLite or on-disk data corruption. "
+            "That can break plugin persistence and may keep returning until the damaged data file is repaired or replaced."
+        )
+
+    if category == "archive_access_error":
+        return (
+            f"Plugin {component} hit a jar or archive access failure while running. "
+            "That usually points to a corrupted plugin jar, unsafe reload behavior, or plugin-side file handling bug."
+        )
+
+    if category == "event_dispatch_failure":
+        return (
+            f"Plugin {component} failed while handling a server event or listener callback. "
+            "That means gameplay or startup hooks are throwing inside plugin code rather than simple low-priority log noise."
         )
 
     if category == "startup_warning":
@@ -457,11 +523,28 @@ def _group_action(primary_item: dict, recommendations: list[str], theme: str, co
 
     if category == "missing_dependency" or context.get("missing_dependencies") or "dependency" in tags:
         dependency_names = context.get("missing_dependencies", [])
+        missing_target_type = str(context.get("missing_target_type", "")).casefold()
+        likely_dependency_name = context.get("likely_dependency_name")
+        likely_dependency_found = bool(context.get("likely_dependency_found_in_inventory"))
+        missing_symbol = context.get("missing_symbol")
+        if missing_target_type == "plugin_dependency" and likely_dependency_found and likely_dependency_name:
+            return (
+                f"Check that {component} and {likely_dependency_name} are on compatible versions and builds, "
+                "because the dependency plugin exists but its classes are still not resolving correctly."
+            )
+        if missing_target_type == "library_or_classpath":
+            subject = likely_dependency_name or missing_symbol or "the missing classpath symbol"
+            return (
+                f"Replace or update {component} with a build that includes {subject}, "
+                "or switch to a version compiled for this server platform."
+            )
         if dependency_names:
             return (
                 f"Install the missing dependency plugin(s) {', '.join(dependency_names)} "
                 f"or remove {component} from the plugins directory."
             )
+        if missing_target_type == "plugin_dependency" and likely_dependency_name:
+            return f"Install or update {likely_dependency_name} before loading {component}, or remove {component} until that dependency is available."
         return f"Install the missing dependency plugins required by {component} or remove {component} from the plugins directory."
 
     if category == "startup_security_warning":
@@ -469,6 +552,18 @@ def _group_action(primary_item: dict, recommendations: list[str], theme: str, co
 
     if category == "plugin_compatibility_warning":
         return f"Verify that {component} officially supports this Minecraft/Paper version and update or replace it if the warning is not expected."
+
+    if category == "plugin_manifest_error":
+        return f"Replace {component} with a valid plugin build that contains a correct plugin manifest before the next restart."
+
+    if category == "data_integrity_error":
+        return f"Inspect and repair {component}'s database or data files, then restore from backup if the SQLite store is corrupted."
+
+    if category == "archive_access_error":
+        return f"Replace the affected jar for {component} and avoid reload-style workflows until the plugin can access its archive cleanly."
+
+    if category == "event_dispatch_failure":
+        return f"Inspect the stacktrace for {component}'s failing listener and update, reconfigure, or temporarily disable that plugin path."
 
     if category == "startup_warning":
         return f"Review the startup warning for {component} and decide whether it needs a config cleanup, plugin update, or can be safely ignored."
@@ -503,6 +598,80 @@ def _group_action(primary_item: dict, recommendations: list[str], theme: str, co
         return recommendations[0]
 
     return "Review the related diagnostic items and address the highest-priority issue first."
+
+
+def _build_pattern_hints(log_summary: dict) -> list[dict]:
+    compact_summary = log_summary.get("compact_summary", {}) if isinstance(log_summary, dict) else {}
+    repeated_patterns = compact_summary.get("repeated_patterns", [])
+    top_active = compact_summary.get("top_active_diagnostics", [])
+    top_resolved = compact_summary.get("top_resolved_diagnostics", [])
+
+    hints: list[dict] = []
+    for item in [*repeated_patterns, *top_active, *top_resolved]:
+        if isinstance(item, dict):
+            hints.append(item)
+    return hints
+
+
+def _match_compact_pattern(primary_item: dict, related_items: list[dict], theme: str, pattern_hints: list[dict]) -> dict | None:
+    candidate_components = {
+        str(primary_item.get("suspected_component") or "").casefold(),
+        str(primary_item.get("source_name") or "").casefold(),
+    }
+    for item in related_items:
+        candidate_components.add(str(item.get("suspected_component") or "").casefold())
+        candidate_components.add(str(item.get("source_name") or "").casefold())
+    candidate_components.discard("")
+
+    resolved = str(primary_item.get("context", {}).get("historical_status", "active")).casefold()
+
+    for pattern in pattern_hints:
+        pattern_component = str(pattern.get("suspected_component") or "").casefold()
+        pattern_status = str(pattern.get("historical_status", "active")).casefold()
+        pattern_category = str(pattern.get("category", "general"))
+
+        if resolved != pattern_status and pattern_status in {"active", "resolved"}:
+            continue
+        if pattern_component and pattern_component not in candidate_components:
+            continue
+        if theme == "plugin_runtime" and pattern_category in {
+            "plugin_startup",
+            "missing_dependency",
+            "plugin_compatibility_warning",
+            "plugin_manifest_error",
+            "data_integrity_error",
+            "archive_access_error",
+            "event_dispatch_failure",
+            "log_error",
+            "exception",
+            "exception_chain",
+        }:
+            return pattern
+        if theme == "network_config" and pattern_category in {"startup_security_warning", "rcon_configuration", "security_configuration"}:
+            return pattern
+        if theme == "config_parse" and pattern_category == "parse_error":
+            return pattern
+        if theme == "startup_misc" and pattern_category in {"startup_warning", "plugin_compatibility_warning", "startup_security_warning"}:
+            return pattern
+
+    return None
+
+
+def _is_generic_group_title(pattern: dict) -> bool:
+    title = str(pattern.get("title", "")).strip().casefold()
+    if not title:
+        return True
+    generic_titles = {
+        "log issue",
+        "diagnostic issue",
+        "warning log entry detected",
+        "error log entry detected",
+        "startup error log entry detected",
+        "exception reported in logs",
+        "missing plugin dependency detected",
+        "missing library or classpath dependency detected",
+    }
+    return title in generic_titles
 
 
 def _dict_to_diagnostic_item(item: dict) -> DiagnosticItem:

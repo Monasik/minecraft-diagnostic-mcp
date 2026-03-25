@@ -3,9 +3,10 @@ from typing import Optional
 from minecraft_diagnostic_mcp.collectors.docker_collector import (
     get_container_status,
     get_recent_logs,
+    get_runtime_readiness,
     get_server_stats,
 )
-from minecraft_diagnostic_mcp.collectors.rcon_collector import run_rcon_command
+from minecraft_diagnostic_mcp.collectors.rcon_collector import get_rcon_readiness, run_rcon_command
 from minecraft_diagnostic_mcp.settings import settings
 
 
@@ -99,7 +100,8 @@ def server_stats() -> str:
         stats = get_server_stats()
         return f"Server Stats:\n{stats}"
     except Exception as e:
-        return f"Error getting server stats: {str(e)}"
+        readiness = get_runtime_readiness()
+        return f"Error getting server stats: {str(e)}\nRuntime readiness: {readiness.get('message', 'unknown')}"
 
 
 def server_logs(lines: int = settings.default_log_lines) -> str:
@@ -112,22 +114,36 @@ def server_logs(lines: int = settings.default_log_lines) -> str:
         logs = get_recent_logs(lines)
         return logs
     except Exception as e:
-        return f"Error fetching logs: {str(e)}"
+        readiness = get_runtime_readiness()
+        return f"Error fetching logs: {str(e)}\nRuntime readiness: {readiness.get('message', 'unknown')}"
 
 
 def check_server_status() -> str:
     """Check if the Minecraft server is running and responsive."""
     try:
         status = get_container_status()
+        runtime_readiness = get_runtime_readiness()
+        rcon_readiness = get_rcon_readiness()
         if status == "running":
             try:
                 response = rcon("list")
                 return f"Server is running and responsive.\nStatus: {status}\n{response}"
             except Exception:
-                return f"Server is running but may not be fully initialized.\nStatus: {status}"
+                return (
+                    f"Server is running but may not be fully initialized.\n"
+                    f"Status: {status}\n"
+                    f"Runtime readiness: {runtime_readiness.get('message', 'unknown')}\n"
+                    f"RCON readiness: {rcon_readiness.get('message', 'unknown')}"
+                )
         return f"Server is not running.\nStatus: {status}"
     except Exception as e:
-        return f"Error checking server status: {str(e)}"
+        runtime_readiness = get_runtime_readiness()
+        rcon_readiness = get_rcon_readiness()
+        return (
+            f"Error checking server status: {str(e)}\n"
+            f"Runtime readiness: {runtime_readiness.get('message', 'unknown')}\n"
+            f"RCON readiness: {rcon_readiness.get('message', 'unknown')}"
+        )
 
 
 def register_admin_tools(mcp) -> None:

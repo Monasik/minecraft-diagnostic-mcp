@@ -10,6 +10,37 @@ BRACKET_PLUGIN_RE = re.compile(r"\[([A-Za-z0-9_.-]+)\]")
 ENABLE_RE = re.compile(r"while enabling\s+([A-Za-z0-9_.-]+)", re.IGNORECASE)
 LOAD_RE = re.compile(r"could not load\s+plugin\s+([A-Za-z0-9_.-]+)", re.IGNORECASE)
 VERSION_OF_RE = re.compile(r"version of\s+([A-Za-z0-9_.-]+)", re.IGNORECASE)
+MISSING_CLASS_RE = re.compile(r"(?:NoClassDefFoundError|ClassNotFoundException):?\s+([A-Za-z0-9_/$\.]+)", re.IGNORECASE)
+
+KNOWN_DEPENDENCY_SYMBOLS = {
+    "placeholderapi": ("plugin_dependency", "PlaceholderAPI"),
+    "me.clip.placeholderapi": ("plugin_dependency", "PlaceholderAPI"),
+    "vault": ("plugin_dependency", "Vault"),
+    "net.milkbowl.vault": ("plugin_dependency", "Vault"),
+    "worldedit": ("plugin_dependency", "WorldEdit"),
+    "com.sk89q.worldedit": ("plugin_dependency", "WorldEdit"),
+    "worldguard": ("plugin_dependency", "WorldGuard"),
+    "com.sk89q.worldguard": ("plugin_dependency", "WorldGuard"),
+    "luckperms": ("plugin_dependency", "LuckPerms"),
+    "net.luckperms": ("plugin_dependency", "LuckPerms"),
+    "protocollib": ("plugin_dependency", "ProtocolLib"),
+    "com.comphenix.protocol": ("plugin_dependency", "ProtocolLib"),
+    "packetevents": ("plugin_dependency", "PacketEvents"),
+    "com.github.retrooper.packetevents": ("plugin_dependency", "PacketEvents"),
+    "floodgate": ("plugin_dependency", "Floodgate"),
+    "org.geysermc.floodgate": ("plugin_dependency", "Floodgate"),
+    "geyser": ("plugin_dependency", "Geyser"),
+    "org.geysermc.geyser": ("plugin_dependency", "Geyser"),
+    "citizens": ("plugin_dependency", "Citizens"),
+    "net.citizensnpcs": ("plugin_dependency", "Citizens"),
+    "oraxen": ("plugin_dependency", "Oraxen"),
+    "io.th0rgal.oraxen": ("plugin_dependency", "Oraxen"),
+    "itemsadder": ("plugin_dependency", "ItemsAdder"),
+    "dev.lone.itemsadder": ("plugin_dependency", "ItemsAdder"),
+    "nexo": ("plugin_dependency", "Nexo"),
+    "com.nexomc.nexo": ("plugin_dependency", "Nexo"),
+    "nexoitems": ("plugin_dependency", "Nexo"),
+}
 
 
 def analyze_log_records(records: list[dict]) -> list[DiagnosticItem]:
@@ -35,6 +66,18 @@ def analyze_log_records(records: list[dict]) -> list[DiagnosticItem]:
                 "source_file": record.get("log_source_file"),
             },
         )
+
+        specific_error = _build_specific_error_finding(
+            text=text,
+            text_lower=text_lower,
+            level=level,
+            component=component,
+            evidence=evidence,
+            log_context=log_context,
+            startup_phase=startup_phase,
+        )
+        if specific_error is not None:
+            findings.append(specific_error)
 
         if "could not load" in text_lower:
             findings.append(
@@ -77,22 +120,45 @@ def analyze_log_records(records: list[dict]) -> list[DiagnosticItem]:
             )
 
         if "noclassdeffounderror" in text_lower or "classnotfoundexception" in text_lower:
+            missing_symbol = _extract_missing_symbol(text)
+            missing_target_type, likely_dependency_name = _classify_missing_symbol(missing_symbol)
+            if missing_target_type == "plugin_dependency":
+                title = "Missing plugin dependency detected"
+                summary = "A required plugin API or dependency class could not be found, which usually means a missing plugin dependency."
+                tags = ["log", "dependency", "plugin", *(_startup_tags(startup_phase))]
+                recommendations = [
+                    "Install or update the missing dependency plugin before restarting the affected plugin.",
+                    "Confirm the dependent plugin matches the server platform and version.",
+                ]
+            else:
+                title = "Missing library or classpath dependency detected"
+                summary = "A required class could not be found, which usually points to a missing bundled library, shaded dependency, or incompatible plugin build."
+                tags = ["log", "dependency", "classpath", *(_startup_tags(startup_phase))]
+                recommendations = [
+                    "Verify that the plugin build includes its required libraries and matches the server platform and version.",
+                    "Check whether the plugin jar is incomplete or built for a different environment.",
+                ]
             findings.append(
                 DiagnosticItem(
                     severity="error",
                     category="missing_dependency",
                     source_type="log",
                     source_name="docker_logs",
-                    title="Missing class or dependency detected",
-                    summary="A required class could not be found, which often means a missing plugin, library, or incompatible server build.",
+                    title=title,
+                    summary=summary,
                     suspected_component=component,
                     evidence=evidence,
-                    tags=["log", "dependency", "classpath", *(_startup_tags(startup_phase))],
-                    context=build_missing_dependency_context(component, [], None) | log_context,
-                    recommendations=[
-                        "Check hard dependencies for the affected plugin.",
-                        "Confirm the plugin build matches the server platform and version.",
-                    ],
+                    tags=tags,
+                    context=build_missing_dependency_context(
+                        component,
+                        [likely_dependency_name] if missing_target_type == "plugin_dependency" and likely_dependency_name else [],
+                        None,
+                        missing_target_type=missing_target_type,
+                        missing_symbol=missing_symbol,
+                        likely_dependency_name=likely_dependency_name,
+                    )
+                    | log_context,
+                    recommendations=recommendations,
                 )
             )
 
@@ -309,7 +375,7 @@ def _build_operational_warning(level, text, text_lower, component, evidence, log
 
 
 def _build_startup_warning(level, text, text_lower, component, evidence, log_context, startup_phase):
-    if not startup_phase or level != "WARN":
+    if level != "WARN":
         return None
 
     if "offline/insecure mode" in text_lower or ('online-mode' in text_lower and '"true"' in text_lower):
@@ -352,6 +418,9 @@ def _build_startup_warning(level, text, text_lower, component, evidence, log_con
             ],
         )
 
+    if not startup_phase:
+        return None
+
     startup_info_patterns = (
         "deprecated",
         "lang file",
@@ -379,5 +448,119 @@ def _build_startup_warning(level, text, text_lower, component, evidence, log_con
     return None
 
 
+def _build_specific_error_finding(level, text, text_lower, component, evidence, log_context, startup_phase):
+    if level not in {"ERROR", "WARN"}:
+        return None
+
+    if "database disk image is malformed" in text_lower or "sqlite_corrupt" in text_lower:
+        return DiagnosticItem(
+            severity="error",
+            category="data_integrity_error",
+            source_type="log",
+            source_name="docker_logs",
+            title="SQLite data corruption detected",
+            summary="The logs indicate SQLite database corruption, which can break plugin data reads or writes until the affected data store is repaired or restored.",
+            suspected_component=component,
+            evidence=evidence,
+            tags=["log", "database", "sqlite", "integrity", *(_startup_tags(startup_phase))],
+            context=log_context,
+            recommendations=[
+                "Check the affected plugin database file, restore from backup if needed, and verify disk or shutdown stability before restarting the plugin.",
+            ],
+        )
+
+    if "zip file closed" in text_lower:
+        return DiagnosticItem(
+            severity="error" if level == "ERROR" else "warning",
+            category="archive_access_error",
+            source_type="log",
+            source_name="docker_logs",
+            title="Plugin archive access failed",
+            summary="The logs show a closed zip/jar access failure, which often points to a corrupted plugin archive, unexpected reload behavior, or plugin I/O bug.",
+            suspected_component=component,
+            evidence=evidence,
+            tags=["log", "archive", "jar", "io", *(_startup_tags(startup_phase))],
+            context=log_context,
+            recommendations=[
+                "Reinstall or replace the affected plugin jar and avoid live-reload workflows if the plugin is not designed for them.",
+            ],
+        )
+
+    if "plugin description" in text_lower and "no name field found in plugin.yml" in text_lower:
+        return DiagnosticItem(
+            severity="error",
+            category="plugin_manifest_error",
+            source_type="log",
+            source_name="docker_logs",
+            title="Plugin manifest is invalid",
+            summary="A plugin jar contains an invalid plugin manifest, so the server cannot load it as a valid Bukkit/Paper plugin.",
+            suspected_component=component,
+            evidence=evidence,
+            tags=["log", "plugin", "manifest", *(_startup_tags(startup_phase))],
+            context=log_context,
+            recommendations=[
+                "Replace the plugin jar with a valid build that contains a correct plugin.yml or paper-plugin.yml manifest.",
+            ],
+        )
+
+    if "could not pass event" in text_lower or ("caught unhandled exception" in text_lower and "calling event" in text_lower):
+        return DiagnosticItem(
+            severity="error" if level == "ERROR" else "warning",
+            category="event_dispatch_failure",
+            source_type="log",
+            source_name="docker_logs",
+            title="Plugin event dispatch failed",
+            summary="The logs show an event listener or event dispatch failure, which usually means a plugin threw inside a listener during gameplay or startup hooks.",
+            suspected_component=component,
+            evidence=evidence,
+            tags=["log", "plugin", "event", *(_startup_tags(startup_phase))],
+            context=log_context,
+            recommendations=[
+                "Inspect the related stacktrace and update or reconfigure the plugin that owns the failing listener.",
+            ],
+        )
+
+    return None
+
+
 def _startup_tags(startup_phase: bool) -> list[str]:
     return ["startup"] if startup_phase else []
+
+
+def _extract_missing_symbol(text: str) -> str | None:
+    match = MISSING_CLASS_RE.search(text)
+    if not match:
+        return None
+    return _clean_symbol_name(match.group(1))
+
+
+def _classify_missing_symbol(symbol: str | None) -> tuple[str, str | None]:
+    if not symbol:
+        return "library_or_classpath", None
+
+    normalized = str(symbol).strip().replace("/", ".").replace("$", ".").strip(".")
+    normalized_lower = normalized.casefold()
+
+    for key, value in KNOWN_DEPENDENCY_SYMBOLS.items():
+        if normalized_lower == key or normalized_lower.startswith(f"{key}."):
+            return value
+
+    tail = normalized_lower.split(".")[-1]
+    for key, value in KNOWN_DEPENDENCY_SYMBOLS.items():
+        if tail == key.split(".")[-1]:
+            return value
+
+    return "library_or_classpath", _clean_symbol_name(normalized)
+
+
+def _clean_symbol_name(raw: str) -> str:
+    text = str(raw).strip().strip(":;,.)]}")
+    text = text.replace("/", ".").replace("$", ".")
+    text = re.sub(r"\.+", ".", text)
+    text = text.strip(".")
+    if not text:
+        return ""
+    parts = [part for part in text.split(".") if part]
+    if not parts:
+        return text
+    return parts[-1]
