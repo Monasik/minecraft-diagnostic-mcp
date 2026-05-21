@@ -12,3 +12,10 @@ build/
 # Local runtime / scratch data
 mcserver-runtime-sandbox/
 *.log
+
+# Local AI / planning docs
+AGENTS.md
+ROADMAP.md
+TODO.md
+DEVELOPMENT.md
+RELEASE_CHECKLIST.md
