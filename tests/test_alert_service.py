@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from minecraft_diagnostic_mcp.services.alert_service import _build_discord_payload, poll_alerts_once, preview_alert_candidates
+from minecraft_diagnostic_mcp.services.alert_service import _alert_fingerprint, _build_discord_payload, poll_alerts_once, preview_alert_candidates
 
 
 class AlertServiceTests(unittest.TestCase):
@@ -59,7 +59,7 @@ class AlertServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             state_file = Path(temp_dir) / "alerts.json"
             with patch("minecraft_diagnostic_mcp.services.alert_service.analyze_recent_logs", return_value=analysis), \
-                 patch("minecraft_diagnostic_mcp.services.alert_service._send_discord_webhook", side_effect=lambda payload: sent_payloads.append(payload)), \
+                 patch("minecraft_diagnostic_mcp.services.alert_service._dispatch_batch", side_effect=lambda items: sent_payloads.append(items)), \
                  patch("minecraft_diagnostic_mcp.services.alert_service._state_file_path", return_value=state_file):
                 first = poll_alerts_once()
                 second = poll_alerts_once()
@@ -110,12 +110,17 @@ class AlertServiceTests(unittest.TestCase):
                 discord_alert_max_batch_items=3,
                 discord_alert_username="Minecraft Diagnostic MCP",
                 discord_webhook_url="https://example.test/webhook",
+                generic_webhook_enabled=False,
+                generic_webhook_url="",
+                generic_webhook_headers_json="",
+                alert_file_sink_enabled=False,
+                alert_file_sink_path="",
                 server_root=temp_dir,
                 discord_alert_state_file=str(state_file),
             )
             with patch("minecraft_diagnostic_mcp.services.alert_service.settings", fake_settings), \
                  patch("minecraft_diagnostic_mcp.services.alert_service.analyze_recent_logs", return_value=analysis), \
-                 patch("minecraft_diagnostic_mcp.services.alert_service._send_discord_webhook", side_effect=lambda payload: sent_payloads.append(payload)), \
+                 patch("minecraft_diagnostic_mcp.services.alert_service._dispatch_batch", side_effect=lambda items: sent_payloads.append(_build_discord_payload(items))), \
                  patch("minecraft_diagnostic_mcp.services.alert_service._state_file_path", return_value=state_file), \
                  patch("minecraft_diagnostic_mcp.services.alert_service.time.time", side_effect=[1000, 1020, 1085]):
                 first = poll_alerts_once()
@@ -154,6 +159,36 @@ class AlertServiceTests(unittest.TestCase):
         self.assertIn("Missing dependencies", fields)
         self.assertIn("MissingLib", fields["Missing dependencies"])
         self.assertIn("Log source", fields)
+
+    def test_alert_fingerprint_ignores_variable_log_timestamps_and_ids(self) -> None:
+        base = {
+            "severity": "warning",
+            "priority": 46,
+            "title": "Exception reported in logs",
+            "category": "exception",
+            "source_type": "log",
+            "source_name": "docker_logs",
+            "summary": "Exception",
+            "suspected_component": "80",
+            "context": {"source_file": "logs/latest.log"},
+            "evidence": [
+                {
+                    "excerpt": "[13:03:13] [ForkJoinPool.commonPool-worker-4/WARN]: "
+                    "net.kyori.adventure.key.InvalidKeyException: Non [a-z0-9_\\-./]+ "
+                    "character in value of Key[nexo:emoji/PeepoWeird.png] at index 6 ('P', bytes: [80])",
+                    "source": "docker_logs",
+                    "line_number": 1,
+                }
+            ],
+        }
+        repeated = json.loads(json.dumps(base))
+        repeated["evidence"][0]["excerpt"] = (
+            "[13:20:02] [ForkJoinPool.commonPool-worker-2/WARN]: "
+            "net.kyori.adventure.key.InvalidKeyException: Non [a-z0-9_\\-./]+ "
+            "character in value of Key[nexo:emoji/PeepoWeird.png] at index 6 ('P', bytes: [80])"
+        )
+
+        self.assertEqual(_alert_fingerprint(base), _alert_fingerprint(repeated))
 
     def test_build_discord_payload_batches_multiple_items(self) -> None:
         items = [

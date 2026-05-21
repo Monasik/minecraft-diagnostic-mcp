@@ -6,7 +6,10 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from minecraft_diagnostic_mcp.tools.diagnostic_tools import (
+    analyze_dependency_graph,
+    analyze_performance,
     analyze_recent_logs,
+    apply_remediation,
     extract_raw_logs,
     get_server_snapshot,
     incident_timeline,
@@ -18,6 +21,8 @@ from minecraft_diagnostic_mcp.tools.diagnostic_tools import (
     list_plugins,
     list_stacktrace_plugins,
     list_watchdog_dumps,
+    list_integrations,
+    plan_remediation,
     search_logs,
 )
 
@@ -218,6 +223,84 @@ class ToolContractOutputTests(unittest.TestCase):
         self.assertTrue({"matched_record_count", "records", "precision"} <= set(watchdog_result))
         self.assertTrue({"plugin_count", "plugins", "files_scanned", "precision"} <= set(plugins_result))
         self.assertTrue({"command_count", "commands", "precision"} <= set(commands_result))
+
+    def test_analyze_dependency_graph_output_keeps_expected_top_level_fields(self) -> None:
+        with patch(
+            "minecraft_diagnostic_mcp.tools.diagnostic_tools.analyze_dependency_graph_service",
+            return_value={
+                "plugin_count": 2,
+                "edge_count": 1,
+                "nodes": [],
+                "edges": [],
+                "blocked_plugins": [],
+                "cycles": [],
+                "log_signals": [],
+                "summary": "ok",
+            },
+        ):
+            result = analyze_dependency_graph()
+
+        self.assertTrue({"plugin_count", "edge_count", "nodes", "edges", "blocked_plugins", "cycles", "log_signals", "summary"} <= set(result))
+
+    def test_analyze_performance_output_keeps_expected_top_level_fields(self) -> None:
+        with patch(
+            "minecraft_diagnostic_mcp.tools.diagnostic_tools.analyze_performance_service",
+            return_value={
+                "execution_mode": "runtime",
+                "runtime_stats": {"available": True},
+                "total_diagnostics": 1,
+                "performance_item_count": 1,
+                "category_counts": {"performance_warning": 1},
+                "top_components": [],
+                "lag_signals": [],
+                "top_patterns": [],
+                "recommendations": [],
+                "summary": "ok",
+            },
+        ):
+            result = analyze_performance()
+
+        self.assertTrue({"execution_mode", "runtime_stats", "total_diagnostics", "performance_item_count", "category_counts", "top_components", "lag_signals", "top_patterns", "recommendations", "summary"} <= set(result))
+
+    def test_plan_remediation_output_keeps_expected_top_level_fields(self) -> None:
+        with patch(
+            "minecraft_diagnostic_mcp.tools.diagnostic_tools.plan_remediation_service",
+            return_value={
+                "action_count": 1,
+                "automatic_action_count": 1,
+                "manual_action_count": 0,
+                "actions": [],
+                "summary": "ok",
+            },
+        ):
+            result = plan_remediation()
+
+        self.assertTrue({"action_count", "automatic_action_count", "manual_action_count", "actions", "summary"} <= set(result))
+
+    def test_apply_remediation_output_keeps_expected_top_level_fields(self) -> None:
+        with patch(
+            "minecraft_diagnostic_mcp.tools.diagnostic_tools.apply_remediation_service",
+            return_value={
+                "requested_action_count": 1,
+                "applied_count": 1,
+                "skipped_count": 0,
+                "applied": [],
+                "skipped": [],
+                "summary": "ok",
+            },
+        ):
+            result = apply_remediation()
+
+        self.assertTrue({"requested_action_count", "applied_count", "skipped_count", "applied", "skipped", "summary"} <= set(result))
+
+    def test_list_integrations_output_keeps_expected_top_level_fields(self) -> None:
+        with patch(
+            "minecraft_diagnostic_mcp.tools.diagnostic_tools.get_enabled_integrations",
+            return_value=[{"name": "discord_webhook", "enabled": True}],
+        ):
+            result = list_integrations()
+
+        self.assertTrue({"enabled_count", "integrations"} <= set(result))
 
 
 if __name__ == "__main__":

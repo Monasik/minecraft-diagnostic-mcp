@@ -1,4 +1,6 @@
+from minecraft_diagnostic_mcp.integrations.manager import get_enabled_integrations
 from minecraft_diagnostic_mcp.services.config_lint_service import lint_server_config as lint_server_config_service
+from minecraft_diagnostic_mcp.services.dependency_graph_service import analyze_dependency_graph as analyze_dependency_graph_service
 from minecraft_diagnostic_mcp.services.log_analysis_service import analyze_recent_logs as analyze_recent_logs_service
 from minecraft_diagnostic_mcp.services.log_forensics_service import (
     extract_raw_logs as extract_raw_logs_service,
@@ -10,9 +12,14 @@ from minecraft_diagnostic_mcp.services.log_forensics_service import (
     list_watchdog_dumps as list_watchdog_dumps_service,
     search_logs as search_logs_service,
 )
+from minecraft_diagnostic_mcp.services.performance_analysis_service import analyze_performance as analyze_performance_service
 from minecraft_diagnostic_mcp.services.plugin_service import (
     get_plugin_by_name,
     list_plugins as list_plugins_service,
+)
+from minecraft_diagnostic_mcp.services.remediation_service import (
+    apply_remediation as apply_remediation_service,
+    plan_remediation as plan_remediation_service,
 )
 from minecraft_diagnostic_mcp.services.snapshot_service import get_server_snapshot as get_server_snapshot_service
 
@@ -173,6 +180,35 @@ def list_player_commands(
     )
 
 
+def analyze_dependency_graph(include_log_signals: bool = True) -> dict:
+    """Analyze plugin dependency relationships and missing dependency paths."""
+    return analyze_dependency_graph_service(include_log_signals=include_log_signals)
+
+
+def analyze_performance(include_archives: bool = True, lines: int = 2000) -> dict:
+    """Analyze runtime and historical performance-related signals."""
+    return analyze_performance_service(include_archives=include_archives, lines=lines)
+
+
+def plan_remediation(default_rcon_password: str = "") -> dict:
+    """Build a remediation plan for safe automatic fixes and manual follow-ups."""
+    return plan_remediation_service(default_rcon_password=default_rcon_password or None)
+
+
+def apply_remediation(action_ids: list[str] | None = None, default_rcon_password: str = "") -> dict:
+    """Apply allowlisted safe remediation actions to server configuration files."""
+    return apply_remediation_service(action_ids=action_ids, default_rcon_password=default_rcon_password or None)
+
+
+def list_integrations() -> dict:
+    """List currently enabled alerting and integration sinks."""
+    integrations = get_enabled_integrations()
+    return {
+        "enabled_count": len(integrations),
+        "integrations": integrations,
+    }
+
+
 def register_diagnostic_tools(mcp) -> None:
     mcp.tool()(list_plugins)
     mcp.tool()(inspect_plugin)
@@ -187,3 +223,8 @@ def register_diagnostic_tools(mcp) -> None:
     mcp.tool()(list_watchdog_dumps)
     mcp.tool()(list_stacktrace_plugins)
     mcp.tool()(list_player_commands)
+    mcp.tool()(analyze_dependency_graph)
+    mcp.tool()(analyze_performance)
+    mcp.tool()(plan_remediation)
+    mcp.tool()(apply_remediation)
+    mcp.tool()(list_integrations)

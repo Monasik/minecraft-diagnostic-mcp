@@ -1,6 +1,6 @@
 # Contract Notes
 
-This document describes the public contract for `minecraft-diagnostic-mcp` at `1.0.0`.
+This document describes the public contract for `minecraft-diagnostic-mcp` at `1.1.0`.
 
 It is intentionally practical:
 
@@ -37,6 +37,11 @@ The following MCP tool names should be treated as stable unless there is a stron
 - `lint_server_config`
 - `analyze_recent_logs`
 - `get_server_snapshot`
+- `analyze_dependency_graph`
+- `analyze_performance`
+- `plan_remediation`
+- `apply_remediation`
+- `list_integrations`
 
 These names should be treated as frozen for `1.x` unless there is a release-blocking compatibility reason to change them.
 
@@ -116,6 +121,62 @@ Top-level fields:
 - `problem_groups`
 - `summary`
 
+### `analyze_dependency_graph()`
+
+Top-level fields:
+
+- `plugin_count`
+- `edge_count`
+- `nodes`
+- `edges`
+- `blocked_plugins`
+- `cycles`
+- `log_signals`
+- `summary`
+
+### `analyze_performance()`
+
+Top-level fields:
+
+- `execution_mode`
+- `runtime_stats`
+- `total_diagnostics`
+- `performance_item_count`
+- `category_counts`
+- `top_components`
+- `lag_signals`
+- `top_patterns`
+- `recommendations`
+- `summary`
+
+### `plan_remediation()`
+
+Top-level fields:
+
+- `action_count`
+- `automatic_action_count`
+- `manual_action_count`
+- `actions`
+- `summary`
+
+### `apply_remediation()`
+
+Top-level fields:
+
+- `requested_action_count`
+- `applied_count`
+- `skipped_count`
+- `applied`
+- `skipped`
+- `summary`
+
+### `list_integrations()`
+
+Top-level fields:
+
+- `enabled_count`
+- `integrations`
+
 Status fields:
 
 - `execution_mode`
@@ -188,12 +249,16 @@ Supported severities:
 
 ## Configuration Stability Notes
 
-The project now treats these settings as part of the intended stable `1.0` operating surface:
+The project now treats these settings as part of the intended stable `1.1` operating surface:
 
 - `MCP_TRANSPORT`
 - `MCP_HTTP_HOST`
 - `MCP_HTTP_PORT`
 - `MCP_HTTP_PATH`
+- `MCP_HTTP_AUTH_ENABLED`
+- `MCP_HTTP_AUTH_BEARER_TOKEN`
+- `MCP_HTTP_AUTH_HEADER_NAME`
+- `MCP_HTTP_AUTH_SCHEME`
 - `MCP_ANALYSIS_MODE`
 - `MCP_RUNTIME_BACKEND`
 - `MCP_SERVER_ROOT`
@@ -210,6 +275,11 @@ The project now treats these settings as part of the intended stable `1.0` opera
 - `MCP_DISCORD_ALERT_SCAN_LINES`
 - `MCP_DISCORD_ALERT_MIN_PRIORITY`
 - `MCP_DISCORD_ALERT_STATE_FILE`
+- `MCP_GENERIC_WEBHOOK_ENABLED`
+- `MCP_GENERIC_WEBHOOK_URL`
+- `MCP_GENERIC_WEBHOOK_HEADERS_JSON`
+- `MCP_ALERT_FILE_SINK_ENABLED`
+- `MCP_ALERT_FILE_SINK_PATH`
 
 These settings should be treated as operational tuning, not strong client-facing API guarantees:
 

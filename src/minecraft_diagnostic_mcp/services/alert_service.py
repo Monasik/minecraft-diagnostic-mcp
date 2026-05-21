@@ -1,17 +1,22 @@
 import hashlib
 import json
 import logging
+import re
 import threading
 import time
 from pathlib import Path
 from typing import Any
-from urllib import error, request
 
+from minecraft_diagnostic_mcp.integrations.manager import dispatch_alerts, get_enabled_integrations
 from minecraft_diagnostic_mcp.services.log_analysis_service import analyze_recent_logs
 from minecraft_diagnostic_mcp.settings import settings
 
 
 LOGGER = logging.getLogger(__name__)
+LOG_PREFIX_RE = re.compile(r"^\[\d{2}:\d{2}:\d{2}\]\s+\[[^\]]+\]:\s*")
+UUID_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE)
+HEX_ID_RE = re.compile(r"\b[0-9a-f]{16,}\b", re.IGNORECASE)
+NUMBER_RE = re.compile(r"\b\d+\b")
 NOISE_CATEGORIES = {"operational_movement_warning", "monitoring_warning", "performance_warning", "log_warning"}
 ALERT_CATEGORIES = {
     "plugin_startup",
@@ -28,7 +33,7 @@ ALERT_CATEGORIES = {
 
 
 def alerts_enabled() -> bool:
-    return settings.discord_alerts_enabled and bool(settings.discord_webhook_url)
+    return bool(get_enabled_integrations())
 
 
 def preview_alert_candidates(lines: int | None = None) -> dict[str, Any]:
@@ -96,11 +101,11 @@ def poll_alerts_once() -> dict[str, Any]:
         batch_items.append(item)
         updated = True
         if len(batch_items) >= max_batch_items:
-            _send_discord_webhook(_build_discord_payload(batch_items))
+            _dispatch_batch(batch_items)
             batch_items = []
 
     if batch_items:
-        _send_discord_webhook(_build_discord_payload(batch_items))
+        _dispatch_batch(batch_items)
 
     if updated:
         _save_alert_state(state)
@@ -154,9 +159,19 @@ def _alert_fingerprint(item: dict[str, Any]) -> str:
         "key": context.get("key"),
         "missing_dependencies": context.get("missing_dependencies", []),
         "issue_family": context.get("issue_family"),
-        "excerpt": excerpt[:240],
+        "excerpt_signature": _normalize_alert_excerpt(excerpt),
     }
     return hashlib.sha256(json.dumps(signature, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _normalize_alert_excerpt(excerpt: str) -> str:
+    normalized = str(excerpt or "").strip()
+    normalized = LOG_PREFIX_RE.sub("", normalized)
+    normalized = UUID_RE.sub("uuid", normalized)
+    normalized = HEX_ID_RE.sub("id", normalized)
+    normalized = NUMBER_RE.sub("#", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip().casefold()
+    return normalized[:260]
 
 
 def _build_discord_payload(item_or_items: dict[str, Any] | list[dict[str, Any]]) -> dict[str, Any]:
@@ -228,22 +243,19 @@ def _discord_color_for_severity(severity: str) -> int:
     return 0x1976D2
 
 
-def _send_discord_webhook(payload: dict[str, Any]) -> None:
-    body = json.dumps(payload).encode("utf-8")
-    req = request.Request(
-        settings.discord_webhook_url,
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with request.urlopen(req, timeout=15) as response:
-            if response.status >= 400:
-                raise RuntimeError(f"Discord webhook returned status {response.status}")
-    except error.HTTPError as exc:
-        raise RuntimeError(f"Discord webhook returned status {exc.code}") from exc
-    except error.URLError as exc:
-        raise RuntimeError(f"Discord webhook request failed: {exc.reason}") from exc
+def _dispatch_batch(items: list[dict[str, Any]]) -> dict[str, Any]:
+    discord_payload = _build_discord_payload(items)
+    generic_payload = _build_generic_alert_payload(items)
+    return dispatch_alerts(discord_payload, generic_payload)
+
+
+def _build_generic_alert_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "event_type": "minecraft_diagnostic_alert_batch",
+        "generated_at": int(time.time()),
+        "alert_count": len(items),
+        "alerts": items,
+    }
 
 
 def _state_file_path() -> Path:

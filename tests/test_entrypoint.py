@@ -26,6 +26,9 @@ class _FakeFastMCP:
     def run(self, **_kwargs) -> None:
         return None
 
+    def streamable_http_app(self):
+        return object()
+
 
 def _install_fake_mcp() -> None:
     mcp_module = ModuleType("mcp")
@@ -74,6 +77,10 @@ class EntrypointTests(unittest.TestCase):
             http_host="0.0.0.0",
             http_port=38127,
             http_path="/mcp",
+            http_auth_enabled=False,
+            http_auth_bearer_token="",
+            http_auth_header_name="Authorization",
+            http_auth_scheme="Bearer",
         )
 
         original_host = server_module.mcp.settings.host
@@ -82,14 +89,13 @@ class EntrypointTests(unittest.TestCase):
         try:
             with patch.object(server_module, "settings", fake_settings), \
                  patch.object(server_module, "start_background_alert_loop") as mocked_alerts, \
-                 patch.object(server_module.mcp, "run") as mocked_run:
+                 patch.object(server_module, "_run_streamable_http_server") as mocked_http_run:
                 server_module.main()
 
             self.assertEqual(server_module.mcp.settings.host, "0.0.0.0")
             self.assertEqual(server_module.mcp.settings.port, 38127)
-            self.assertEqual(server_module.mcp.settings.streamable_http_path, "/mcp")
             mocked_alerts.assert_called_once_with()
-            mocked_run.assert_called_once_with(transport="streamable-http")
+            mocked_http_run.assert_called_once_with()
         finally:
             server_module.mcp.settings.host = original_host
             server_module.mcp.settings.port = original_port

@@ -551,12 +551,7 @@ def _iter_log_records(path: Path, explicit_date: date | None = None) -> Iterator
             current = {"path": str(path), "line_start": line_number, "raw_lines": [line]}
             continue
 
-        if _is_stacktrace_line(line) or not line.strip():
-            current["raw_lines"].append(line)
-            continue
-
-        yield _finalize_record(current, inferred_date, date_source, precision_notices)
-        current = {"path": str(path), "line_start": line_number, "raw_lines": [line]}
+        current["raw_lines"].append(line)
 
     if current is not None:
         yield _finalize_record(current, inferred_date, date_source, precision_notices)

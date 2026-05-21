@@ -2,7 +2,7 @@
 
 Support statement for `minecraft-diagnostic-mcp`.
 
-This document describes what the project is willing to guarantee for `1.0.0`.
+This document describes what the project is willing to guarantee for `1.1.0`.
 
 ## Product Support Boundary
 
@@ -14,7 +14,7 @@ It is intended to help MCP clients:
 - lint core server configuration
 - analyze recent and historical server logs
 - build a compact diagnostic snapshot
-- optionally emit Discord webhook alerts for high-signal issues
+- optionally emit Discord, generic webhook, or file-sink alerts for high-signal issues
 
 It is not intended to be:
 
@@ -113,12 +113,12 @@ Best for:
 
 Known limitations:
 
-- public exposure requires your own network safety choices
-- this project does not add its own HTTP auth layer
+- public exposure still requires your own network safety choices
+- the built-in HTTP auth layer is a static token guard, not a full identity platform
 
 ## Platform Statement
 
-Supported at `1.0.0`:
+Supported at `1.1.0`:
 
 - Python 3.10+
 - Windows for backup mode and local runtime mode
@@ -139,6 +139,11 @@ The following MCP tool names are intended to remain stable across `1.x` unless t
 - `lint_server_config`
 - `analyze_recent_logs`
 - `get_server_snapshot`
+- `analyze_dependency_graph`
+- `analyze_performance`
+- `plan_remediation`
+- `apply_remediation`
+- `list_integrations`
 - `check_server_status`
 - `server_stats`
 - `server_logs`
@@ -148,7 +153,7 @@ The following MCP tool names are intended to remain stable across `1.x` unless t
 
 See [CONTRACT.md](C:\Users\JELENPC\Desktop\Minecraft MCP Server\rcon-mcp\CONTRACT.md) for stable payload expectations.
 
-## Configuration Promise At `1.0.0`
+## Configuration Promise At `1.1.0`
 
 At `1.0.0`, the project keeps the main deployment-facing environment variables stable enough for real users to rely on them.
 
@@ -159,7 +164,8 @@ Stable configuration surface:
 - execution mode and runtime backend settings
 - backup filesystem path settings
 - container name and local RCON settings
-- Discord webhook alerting settings
+- HTTP auth settings
+- Discord / generic webhook / file-sink integration settings
 
 Not promised as strongly stable:
 
@@ -171,7 +177,7 @@ Not promised as strongly stable:
 The following are intentionally out of scope:
 
 - deep bytecode analysis
-- autonomous repair actions
+- broad autonomous repair actions outside the allowlisted remediation flow
 - HTTP remote management platform features
 - plugin-specific expert support for every ecosystem
 - dashboards, analytics products, or report generators

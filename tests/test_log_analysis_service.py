@@ -71,6 +71,52 @@ class LogAnalysisServiceTests(unittest.TestCase):
         self.assertTrue(result["archives_included"])
         self.assertEqual(len(result["log_files_scanned"]), 1)
         self.assertEqual(result["log_files_scanned"][0]["file_type"], "log.gz")
+        self.assertEqual(result["log_source_groups"]["latest"]["record_count"], 1)
+        self.assertEqual(result["log_source_groups"]["archives"]["record_count"], 1)
+        self.assertEqual(result["log_source_groups"]["archives"]["file_count"], 1)
+        self.assertEqual(result["log_source_groups"]["archives"]["files"][0]["name"], "2026-03-10-1.log.gz")
+        self.assertGreaterEqual(len(result["archive_diagnostics"]), 1)
+        archive_item = result["archive_diagnostics"][0]
+        self.assertEqual(archive_item["context"]["source_file_name"], "2026-03-10-1.log.gz")
+        self.assertEqual(archive_item["context"]["source_display_name"], "2026-03-10-1.log.gz")
+        self.assertEqual(archive_item["context"]["source_kind"], "archive_log")
+
+    def test_analyze_recent_logs_splits_latest_archive_startup_and_runtime_diagnostics(self) -> None:
+        recent_log = "\n".join(
+            [
+                "[22:10:00] [Server thread/ERROR]: [PyroFishingPro] Runtime failure after startup",
+                "[22:11:00] [Server thread/WARN]: Can't keep up! Is the server overloaded? Running 2638ms or 52 ticks behind",
+            ]
+        )
+        full_log = "\n".join(
+            [
+                "[21:33:19] [Server thread/INFO]: Starting minecraft server version 1.21.8",
+                "[21:33:30] [Server thread/WARN]: [DeluxeMenus] Could not setup a NMS hook for your server version!",
+                '[21:34:33] [Server thread/INFO]: Done (98.510s)! For help, type "help"',
+                "[22:10:00] [Server thread/ERROR]: [PyroFishingPro] Runtime failure after startup",
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            old_archive_path = Path(temp_dir) / "2026-02-01-1.log.gz"
+            with gzip.open(old_archive_path, "wt", encoding="utf-8") as handle:
+                handle.write("[20:00:00] [Server thread/ERROR]: Error occurred while enabling Vulcan v2.9.7.16 (Is it up to date?)\n")
+
+            with patch("minecraft_diagnostic_mcp.services.log_analysis_service.get_recent_logs", return_value=recent_log), \
+                 patch("minecraft_diagnostic_mcp.services.log_analysis_service.get_latest_log_path", return_value=Path("latest.log")), \
+                 patch("minecraft_diagnostic_mcp.services.log_analysis_service.read_text_file", return_value=full_log), \
+                 patch("minecraft_diagnostic_mcp.services.log_analysis_service.list_plugins", return_value={"plugins": [{"name": "Vulcan"}, {"name": "DeluxeMenus"}, {"name": "PyroFishingPro"}]}), \
+                 patch("minecraft_diagnostic_mcp.services.log_analysis_service.list_log_files", return_value=[
+                     type("LogFileInfo", (), {"path": str(old_archive_path), "file_type": "log.gz", "readable": True, "modified_time": None})()
+                 ]):
+                result = analyze_recent_logs(50, include_archives=True)
+
+        self.assertTrue(any(item["context"]["source_file_name"] == "latest.log" for item in result["latest_diagnostics"]))
+        self.assertTrue(any(item["context"]["source_file_name"] == "2026-02-01-1.log.gz" for item in result["archive_diagnostics"]))
+        self.assertTrue(any(item["context"].get("startup_phase") for item in result["startup_diagnostics"]))
+        self.assertTrue(all(not item["context"].get("startup_phase") for item in result["runtime_diagnostics"]))
+        archive_names = {item["context"]["source_display_name"] for item in result["archive_diagnostics"]}
+        self.assertEqual(archive_names, {"2026-02-01-1.log.gz"})
 
     def test_analyze_recent_logs_marks_old_error_as_resolved_when_absent_from_latest(self) -> None:
         recent_log = "[22:36:06] [Server thread/INFO]: Regular runtime line\n"

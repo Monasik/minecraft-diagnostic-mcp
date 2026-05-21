@@ -117,6 +117,39 @@ class LogForensicsServiceTests(unittest.TestCase):
         self.assertIn("PlayerMarketStorageListener", result["records"][0]["full_raw"])
         self.assertIn("CraftChest", result["records"][0]["full_raw"])
 
+    def test_search_logs_keeps_exception_header_and_stacktrace_together(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logs_dir = Path(temp_dir)
+            archive_path = logs_dir / "2026-05-15-1.log.gz"
+            with gzip.open(archive_path, "wt", encoding="utf-8") as handle:
+                handle.write(
+                    "[19:55:22] [Server thread/WARN]: [TempFly] Task #299 for TempFly v3.1.7 generated an exception\n"
+                    "java.lang.IllegalArgumentException: No enum constant org.bukkit.Effect.HAPPY_VILLAGER\n"
+                    "\tat TempFly-3.1.7.jar/com.moneybags.tempfly.aesthetic.particle.Particles.play(Particles.java:70)\n"
+                    "[19:55:23] [Server thread/INFO]: next record\n"
+                )
+
+            fake_logs = [
+                type("LogFileInfo", (), {"path": str(archive_path), "file_type": "log.gz", "modified_time": datetime(2026, 5, 15, 23, 59, 0)})(),
+            ]
+
+            with patch("minecraft_diagnostic_mcp.services.log_forensics_service.get_logs_dir", return_value=logs_dir), \
+                 patch("minecraft_diagnostic_mcp.services.log_forensics_service.list_log_files", return_value=fake_logs):
+                result = search_logs(
+                    source="archives",
+                    date_value="2026-05-15",
+                    contains="TempFly",
+                    max_lines=20,
+                    mode="full_raw",
+                )
+
+        self.assertEqual(result["matched_record_count"], 1)
+        record = result["records"][0]
+        self.assertEqual(record["timestamp"], "2026-05-15 19:55:22")
+        self.assertTrue(record["has_stacktrace"])
+        self.assertIn("generated an exception", record["full_raw"])
+        self.assertIn("HAPPY_VILLAGER", record["full_raw"])
+
     def test_incident_timeline_includes_preceding_commands_and_following_recovery(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             logs_dir = Path(temp_dir)

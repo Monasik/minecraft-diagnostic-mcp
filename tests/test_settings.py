@@ -36,6 +36,9 @@ class SettingsTests(unittest.TestCase):
             os.environ["MCP_HTTP_HOST"] = "0.0.0.0"
             os.environ["MCP_HTTP_PORT"] = "9000"
             os.environ["MCP_HTTP_PATH"] = "/"
+            os.environ["MCP_HTTP_AUTH_ENABLED"] = "true"
+            os.environ["MCP_HTTP_AUTH_BEARER_TOKEN"] = "secret-token"
+            os.environ["MCP_HTTP_AUTH_HEADER_NAME"] = "X-MCP-Token"
 
             import minecraft_diagnostic_mcp.settings as settings_module
 
@@ -44,6 +47,9 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(settings_module.settings.http_host, "0.0.0.0")
             self.assertEqual(settings_module.settings.http_port, 9000)
             self.assertEqual(settings_module.settings.http_path, "/")
+            self.assertTrue(settings_module.settings.http_auth_enabled)
+            self.assertEqual(settings_module.settings.http_auth_bearer_token, "secret-token")
+            self.assertEqual(settings_module.settings.http_auth_header_name, "X-MCP-Token")
         finally:
             os.environ.clear()
             os.environ.update(original)

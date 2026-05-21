@@ -4,6 +4,38 @@ All notable changes to `minecraft-diagnostic-mcp` should be documented in this f
 
 The format is intentionally lightweight and practical.
 
+## [1.1.0] - 2026-03-25
+
+### Added
+
+- Added optional static token authentication for `streamable-http` transport:
+  - `MCP_HTTP_AUTH_ENABLED`
+  - `MCP_HTTP_AUTH_BEARER_TOKEN`
+  - `MCP_HTTP_AUTH_HEADER_NAME`
+  - `MCP_HTTP_AUTH_SCHEME`
+- Added `analyze_dependency_graph()` for plugin dependency graph inspection and log-signal correlation.
+- Added `analyze_performance()` for heavier performance-oriented analytics over runtime stats and log categories.
+- Added remediation services and MCP tools:
+  - `plan_remediation()`
+  - `apply_remediation()`
+- Added a simple integration registry and additional sinks beyond Discord:
+  - generic webhook integration
+  - local NDJSON file-sink integration
+- Added `list_integrations()` to inspect enabled integration targets.
+- Added tests covering:
+  - HTTP auth header handling
+  - dependency graph service behavior
+  - performance analytics aggregation
+  - remediation planning and safe apply flow
+  - integration manager file-sink behavior
+  - output contracts for the new MCP tools
+
+### Changed
+
+- Expanded the public MCP tool surface with dependency graph, performance, remediation, and integration inspection tools.
+- Refactored alert delivery so serious findings can fan out to multiple integration targets instead of Discord only.
+- Updated README, env example, and contract/support wording for the post-`1.0.0` feature wave.
+
 ## [1.0.0] - 2026-03-25
 
 ### Added

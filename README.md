@@ -15,6 +15,14 @@ It can also be exposed to MCP clients over:
 
 Optionally, it can also send Discord webhook alerts for newly detected serious runtime issues while the MCP server is running.
 
+Post-`1.0.0`, it can also:
+
+- protect Streamable HTTP access with a static bearer token
+- build plugin dependency graphs from manifests and log signals
+- produce heavier performance-oriented analytics
+- generate safe remediation plans and apply a small allowlisted subset of config fixes
+- fan out alert events to generic webhook or local file-sink integrations
+
 The project is designed as a small, layered MCP core with:
 
 - plugin inventory and plugin inspection
@@ -77,6 +85,11 @@ Current MCP tools:
   - `lint_server_config`
   - `analyze_recent_logs`
   - `get_server_snapshot`
+  - `analyze_dependency_graph`
+  - `analyze_performance`
+  - `plan_remediation`
+  - `apply_remediation`
+  - `list_integrations`
 
 ## Installation
 
@@ -118,6 +131,10 @@ Core settings:
 - `MCP_HTTP_HOST`
 - `MCP_HTTP_PORT`
 - `MCP_HTTP_PATH`
+- `MCP_HTTP_AUTH_ENABLED`
+- `MCP_HTTP_AUTH_BEARER_TOKEN`
+- `MCP_HTTP_AUTH_HEADER_NAME`
+- `MCP_HTTP_AUTH_SCHEME`
 - `MCP_ANALYSIS_MODE`
   - `backup`
   - `runtime`
@@ -140,6 +157,11 @@ Core settings:
 - `MCP_DISCORD_ALERT_SCAN_LINES`
 - `MCP_DISCORD_ALERT_MIN_PRIORITY`
 - `MCP_DISCORD_ALERT_STATE_FILE`
+- `MCP_GENERIC_WEBHOOK_ENABLED`
+- `MCP_GENERIC_WEBHOOK_URL`
+- `MCP_GENERIC_WEBHOOK_HEADERS_JSON`
+- `MCP_ALERT_FILE_SINK_ENABLED`
+- `MCP_ALERT_FILE_SINK_PATH`
 
 ### Mode Examples
 
@@ -198,6 +220,20 @@ Then use:
 - Transport: `Streamable HTTP`
 - URL: `http://127.0.0.1:8000/mcp`
 
+Protected Streamable HTTP mode:
+
+```bash
+set MCP_TRANSPORT=streamable-http
+set MCP_HTTP_HOST=127.0.0.1
+set MCP_HTTP_PORT=8000
+set MCP_HTTP_PATH=/mcp
+set MCP_HTTP_AUTH_ENABLED=true
+set MCP_HTTP_AUTH_BEARER_TOKEN=replace-me
+python -m minecraft_diagnostic_mcp
+```
+
+This expects `Authorization: Bearer replace-me` by default. You can switch to a custom static header by setting `MCP_HTTP_AUTH_HEADER_NAME`.
+
 Discord webhook alerts:
 
 ```bash
@@ -211,6 +247,17 @@ python -m minecraft_diagnostic_mcp
 
 With alerts enabled, the server runs a lightweight background poller that checks recent diagnostics and sends a Discord alert only for newly detected active high-severity issues. Resolved historical items and routine runtime noise are ignored.
 
+Generic webhook / file-sink integrations:
+
+```bash
+set MCP_GENERIC_WEBHOOK_ENABLED=true
+set MCP_GENERIC_WEBHOOK_URL=https://example.com/mcp-alerts
+set MCP_GENERIC_WEBHOOK_HEADERS_JSON={"X-Token":"replace-me"}
+set MCP_ALERT_FILE_SINK_ENABLED=true
+set MCP_ALERT_FILE_SINK_PATH=C:\path\to\alerts.ndjson
+python -m minecraft_diagnostic_mcp
+```
+
 ## Run Flow
 
 Recommended run flow for each mode:
@@ -223,6 +270,12 @@ Recommended run flow for each mode:
    - `lint_server_config()`
    - `list_plugins()`
    - `inspect_plugin("PluginName")`
+5. Use the newer post-`1.0.0` tools when needed:
+   - `analyze_dependency_graph()`
+   - `analyze_performance()`
+   - `plan_remediation()`
+   - `apply_remediation([...])`
+   - `list_integrations()`
 
 ## Testing
 
@@ -260,11 +313,11 @@ If you are iterating on runtime behavior, prefer:
 
 Current scope:
 
-- no add-on/plugin ecosystem outside the current plugin-manifest coverage
+- dependency graphing is manifest- and log-signal-based, not bytecode-based
+- remediation is intentionally allowlisted and conservative
+- HTTP auth is static token auth, not a full OAuth or multi-user auth system
+- integrations currently focus on alert delivery, not full bi-directional control-plane workflows
 - no full incident management workflow
-- no deep bytecode analysis
-- no dependency graph engine
-- no auto-remediation or automatic report generation
 
 Runtime notes:
 
@@ -328,15 +381,20 @@ The architecture is intentionally modest:
 
 ## Release Scope
 
-Current stable release: `1.0.0`
+Current stable release: `1.1.0`
 
-`1.0.0` includes:
+`1.1.0` includes:
 
 - stable MCP tool names
 - explicit support boundaries for backup/runtime/transport modes
 - predictable diagnostic payloads for MCP clients
 - realistic deployment and alerting documentation
 - confidence from both unit tests and workflow-style smoke checks
+- static-token auth for HTTP transport
+- dependency graph inspection
+- heavier performance analytics
+- remediation planning and safe allowlisted apply flow
+- generic integration fanout beyond Discord
 
 Deliberately out of scope for `1.0.0`:
 

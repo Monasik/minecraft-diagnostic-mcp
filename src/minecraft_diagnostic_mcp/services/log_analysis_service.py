@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 
 from minecraft_diagnostic_mcp.collectors.filesystem_collector import (
     get_latest_log_path,
@@ -79,16 +80,19 @@ def analyze_recent_logs(lines: int = 200, include_archives: bool = False, compac
         return _compactify_result(result) if compact else result
 
     records = parse_log_records(raw_logs)
+    recent_record_count = len(records)
     if latest_log_path_str:
         for record in records:
             record["log_source_file"] = latest_log_path_str
 
     latest_log_records, startup_records, startup_window = _load_latest_log_records()
     scanned_files: list[dict] = []
+    archive_records: list[dict] = []
 
     if archives_enabled:
         archive_result = _load_archive_records()
-        records = archive_result["records"] + records
+        archive_records = archive_result["records"]
+        records = archive_records + records
         scanned_files = archive_result["log_files_scanned"]
     else:
         latest_log_path = get_latest_log_path()
@@ -114,12 +118,28 @@ def analyze_recent_logs(lines: int = 200, include_archives: bool = False, compac
         message="Recent log analysis completed successfully.",
     )
 
+    serialized_findings = serialize_findings(findings)
+    source_groups = _build_log_source_groups(
+        latest_log_path_str=latest_log_path_str,
+        recent_record_count=recent_record_count,
+        archives_enabled=archives_enabled,
+        scanned_files=scanned_files,
+        archive_record_count=len(archive_records),
+    )
+    diagnostics_by_scope = _split_diagnostics_by_scope(serialized_findings, latest_log_path_str)
+
     result = {
         "scanned_lines": safe_lines,
         "archives_included": archives_enabled,
         "detail_mode": "compact" if compact else "full",
         "log_files_scanned": scanned_files,
-        "diagnostics": serialize_findings(findings),
+        "log_source_groups": source_groups,
+        "diagnostics_by_scope": diagnostics_by_scope,
+        "latest_diagnostics": diagnostics_by_scope["latest"],
+        "archive_diagnostics": diagnostics_by_scope["archives"],
+        "startup_diagnostics": diagnostics_by_scope["startup"],
+        "runtime_diagnostics": diagnostics_by_scope["runtime"],
+        "diagnostics": serialized_findings,
         "startup_window": startup_window,
         "log_category_counts": _count_categories(findings),
         "summary": {
@@ -152,6 +172,12 @@ def _compactify_result(result: dict) -> dict:
         "archives_included": result.get("archives_included", False),
         "detail_mode": "compact",
         "log_files_scanned": result.get("log_files_scanned", []),
+        "log_source_groups": result.get("log_source_groups", {}),
+        "diagnostics_by_scope": result.get("diagnostics_by_scope", {}),
+        "latest_diagnostics": result.get("latest_diagnostics", []),
+        "archive_diagnostics": result.get("archive_diagnostics", []),
+        "startup_diagnostics": result.get("startup_diagnostics", []),
+        "runtime_diagnostics": result.get("runtime_diagnostics", []),
         "startup_window": result.get("startup_window", {}),
         "log_category_counts": result.get("log_category_counts", {}),
         "compact_summary": compact_summary,
@@ -160,6 +186,72 @@ def _compactify_result(result: dict) -> dict:
 
     compact_result["diagnostics"] = compact_summary.get("top_active_diagnostics", [])
     return compact_result
+
+
+def _build_log_source_groups(
+    latest_log_path_str: str | None,
+    recent_record_count: int,
+    archives_enabled: bool,
+    scanned_files: list[dict],
+    archive_record_count: int,
+) -> dict:
+    archive_files = []
+    if archives_enabled:
+        for item in scanned_files:
+            path = str(item.get("path", ""))
+            archive_files.append(
+                {
+                    "name": _source_file_name(path),
+                    "path": path,
+                    "file_type": item.get("file_type"),
+                    "line_count": item.get("line_count", 0),
+                    "readable": item.get("readable", True),
+                    "read_error": item.get("read_error"),
+                }
+            )
+
+    return {
+        "latest": {
+            "included": bool(latest_log_path_str),
+            "name": _source_file_name(latest_log_path_str),
+            "path": latest_log_path_str,
+            "record_count": recent_record_count,
+            "role": "recent_runtime_window",
+        },
+        "archives": {
+            "included": archives_enabled,
+            "file_count": len(archive_files),
+            "record_count": archive_record_count,
+            "role": "historical_context",
+            "files": archive_files,
+        },
+    }
+
+
+def _split_diagnostics_by_scope(diagnostics: list[dict], latest_log_path_str: str | None) -> dict:
+    buckets = {
+        "latest": [],
+        "archives": [],
+        "startup": [],
+        "runtime": [],
+    }
+    for item in diagnostics:
+        context = item.get("context", {}) if isinstance(item.get("context", {}), dict) else {}
+        source_files = _diagnostic_source_files(item)
+        in_latest = bool(latest_log_path_str and latest_log_path_str in source_files)
+        in_archive = any(_source_kind(path, latest_log_path_str) == "archive_log" for path in source_files)
+        is_startup = bool(context.get("startup_phase")) or "startup" in {str(tag).casefold() for tag in item.get("tags", [])}
+
+        if in_latest:
+            buckets["latest"].append(item)
+        if in_archive:
+            buckets["archives"].append(item)
+        if is_startup:
+            buckets["startup"].append(item)
+        else:
+            buckets["runtime"].append(item)
+
+    return buckets
 
 
 def _build_compact_log_summary(
@@ -720,6 +812,12 @@ def _annotate_historical_status(findings, archives_enabled: bool, latest_log_rec
             source_files.append(single_source)
         if source_files:
             finding.context["source_files"] = source_files
+            source_details = [_source_detail(path, latest_log_path) for path in source_files]
+            finding.context["source_file_details"] = source_details
+            primary_source = source_details[0]
+            finding.context["source_file_name"] = primary_source["name"]
+            finding.context["source_display_name"] = primary_source["display_name"]
+            finding.context["source_kind"] = primary_source["kind"]
 
         signature = _historical_signature(finding)
         seen_in_latest = signature in latest_signature_set or (latest_log_path is not None and latest_log_path in source_files)
@@ -729,6 +827,8 @@ def _annotate_historical_status(findings, archives_enabled: bool, latest_log_rec
 
         if source_files:
             finding.context["last_seen_source"] = source_files[0]
+            finding.context["last_seen_source_name"] = _source_file_name(source_files[0])
+            finding.context["last_seen_source_kind"] = _source_kind(source_files[0], latest_log_path)
 
         if archives_enabled and source_files and not seen_in_latest and any(path != latest_log_path for path in source_files):
             finding.context["historical_status"] = "resolved"
@@ -1003,6 +1103,54 @@ def _historical_signature(finding) -> tuple[str, str, str, str]:
 
 def _build_signature_set(findings) -> set[tuple[str, str, str, str]]:
     return {_historical_signature(finding) for finding in findings}
+
+
+def _diagnostic_source_files(item: dict) -> list[str]:
+    context = item.get("context", {}) if isinstance(item.get("context", {}), dict) else {}
+    source_files = list(context.get("source_files", [])) if isinstance(context.get("source_files", []), list) else []
+    source_file = context.get("source_file")
+    if source_file and source_file not in source_files:
+        source_files.append(source_file)
+    return [str(path) for path in source_files if path]
+
+
+def _source_detail(path: str, latest_log_path: str | None) -> dict:
+    kind = _source_kind(path, latest_log_path)
+    name = _source_file_name(path)
+    if kind == "latest_log":
+        display_name = name or "latest.log"
+    elif kind == "archive_log":
+        display_name = name
+    else:
+        display_name = name or str(path)
+    return {
+        "path": str(path),
+        "name": name,
+        "display_name": display_name,
+        "kind": kind,
+    }
+
+
+def _source_kind(path: str | None, latest_log_path: str | None = None) -> str:
+    if not path:
+        return "unknown"
+    normalized_path = str(path)
+    if latest_log_path and normalized_path == latest_log_path:
+        return "latest_log"
+    name = _source_file_name(normalized_path).casefold()
+    if name == "latest.log":
+        return "latest_log"
+    if name.endswith(".log.gz"):
+        return "archive_log"
+    if name.endswith(".log"):
+        return "workspace_log"
+    return "unknown"
+
+
+def _source_file_name(path: str | None) -> str:
+    if not path:
+        return ""
+    return Path(str(path)).name
 
 
 def _normalize_excerpt_signature(text: str) -> str:

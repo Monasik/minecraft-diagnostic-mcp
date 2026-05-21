@@ -8,6 +8,10 @@ class Settings:
     http_host: str
     http_port: int
     http_path: str
+    http_auth_enabled: bool
+    http_auth_bearer_token: str
+    http_auth_header_name: str
+    http_auth_scheme: str
     container_name: str
     default_log_lines: int
     subprocess_timeout_seconds: int
@@ -31,6 +35,11 @@ class Settings:
     discord_alert_state_file: str
     discord_alert_cooldown_seconds: int
     discord_alert_max_batch_items: int
+    generic_webhook_enabled: bool
+    generic_webhook_url: str
+    generic_webhook_headers_json: str
+    alert_file_sink_enabled: bool
+    alert_file_sink_path: str
     config_targets: tuple[tuple[str, tuple[str, ...]], ...]
 
     def iter_config_targets(self) -> tuple[tuple[str, tuple[str, ...]], ...]:
@@ -61,6 +70,10 @@ settings = Settings(
     http_host=os.getenv("MCP_HTTP_HOST", "127.0.0.1"),
     http_port=_read_int_env("MCP_HTTP_PORT", 8000),
     http_path=os.getenv("MCP_HTTP_PATH", "/mcp").strip() or "/mcp",
+    http_auth_enabled=_read_bool_env("MCP_HTTP_AUTH_ENABLED", False),
+    http_auth_bearer_token=os.getenv("MCP_HTTP_AUTH_BEARER_TOKEN", "").strip(),
+    http_auth_header_name=os.getenv("MCP_HTTP_AUTH_HEADER_NAME", "Authorization").strip() or "Authorization",
+    http_auth_scheme=os.getenv("MCP_HTTP_AUTH_SCHEME", "Bearer").strip() or "Bearer",
     container_name=os.getenv("MCP_CONTAINER_NAME", "mc"),
     default_log_lines=_read_int_env("MCP_DEFAULT_LOG_LINES", 10),
     subprocess_timeout_seconds=_read_int_env("MCP_SUBPROCESS_TIMEOUT_SECONDS", 30),
@@ -84,6 +97,11 @@ settings = Settings(
     discord_alert_state_file=os.getenv("MCP_DISCORD_ALERT_STATE_FILE", "").strip(),
     discord_alert_cooldown_seconds=_read_int_env("MCP_DISCORD_ALERT_COOLDOWN_SECONDS", 1800),
     discord_alert_max_batch_items=_read_int_env("MCP_DISCORD_ALERT_MAX_BATCH_ITEMS", 3),
+    generic_webhook_enabled=_read_bool_env("MCP_GENERIC_WEBHOOK_ENABLED", False),
+    generic_webhook_url=os.getenv("MCP_GENERIC_WEBHOOK_URL", "").strip(),
+    generic_webhook_headers_json=os.getenv("MCP_GENERIC_WEBHOOK_HEADERS_JSON", "").strip(),
+    alert_file_sink_enabled=_read_bool_env("MCP_ALERT_FILE_SINK_ENABLED", False),
+    alert_file_sink_path=os.getenv("MCP_ALERT_FILE_SINK_PATH", "").strip(),
     config_targets=(
         ("server.properties", ("server.properties",)),
         ("bukkit.yml", ("bukkit.yml",)),

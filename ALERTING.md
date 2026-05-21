@@ -1,6 +1,6 @@
-# Discord Alerting Guide
+# Alerting Guide
 
-`minecraft-diagnostic-mcp` can optionally send Discord webhook alerts while the MCP server is running.
+`minecraft-diagnostic-mcp` can optionally fan out serious alert batches while the MCP server is running.
 
 This guide explains how it behaves operationally.
 
@@ -23,9 +23,19 @@ export MCP_DISCORD_ALERT_COOLDOWN_SECONDS=1800
 export MCP_DISCORD_ALERT_MAX_BATCH_ITEMS=3
 ```
 
+Additional sinks:
+
+```bash
+export MCP_GENERIC_WEBHOOK_ENABLED=true
+export MCP_GENERIC_WEBHOOK_URL=https://example.com/mcp-alerts
+export MCP_GENERIC_WEBHOOK_HEADERS_JSON='{"X-Token":"replace-me"}'
+export MCP_ALERT_FILE_SINK_ENABLED=true
+export MCP_ALERT_FILE_SINK_PATH=/var/log/minecraft-diagnostic-mcp/alerts.ndjson
+```
+
 ## What It Alerts On
 
-The alert loop is intentionally conservative.
+The alert loop is intentionally conservative, regardless of which sink receives the alert.
 
 It prefers:
 
